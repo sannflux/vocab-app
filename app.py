@@ -9,6 +9,7 @@ import json
 import re
 import time
 import threading
+import genanki  # NEW: Requires pip install genanki
 
 # ========================== SETUP ==========================
 st.set_page_config(page_title="Vocab App", layout="wide", page_icon="📚")  # Changed to wide for better responsiveness
@@ -159,7 +160,7 @@ def generate_anki_notes(df):
         audio_field = f'[sound:https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q={vocab_raw}]'  # Added audio TTS URL
         anki_notes.append({"Text": text_field, "Pronunciation": pronunciation_field, "Definition": eng_def,
                            "Examples": examples_field, "Synonyms": synonyms_field, "Antonyms": antonyms_field, "Etymology": etymology, "Audio": audio_field})
-    return pd.DataFrame(anki_notes)
+    return anki_notes  # Return list of dicts instead of DF for genanki
 
 # ========================== LOAD / SAVE / SPEECH / WOTD ==========================
 def load_data():
@@ -298,12 +299,341 @@ with tab3:
                     batch_data = generate_anki_card_data_batched(batch)  # Assuming batched function handles one batch
                     all_card_data.extend(batch_data)
                     progress_bar.progress((i + 1) / num_batches)
-                anki_df = generate_anki_notes(pd.DataFrame({"vocab": [v[0] for v in vocab_phrase_list], "phrase": [v[1] for v in vocab_phrase_list]}))  # Recompute with all data
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"anki_cards_export_{timestamp}.csv"
-                csv_bytes = anki_df.to_csv(index=False, header=False, encoding="utf-8-sig").encode()
-                st.success(f"🎉 {len(anki_df)} cards ready!")
-                st.download_button("📥 Download Anki CSV", csv_bytes, filename, "text/csv", use_container_width=True)
-                st.dataframe(anki_df.head(3), use_container_width=True)
+                anki_notes = generate_anki_notes(pd.DataFrame({"vocab": [v[0] for v in vocab_phrase_list], "phrase": [v[1] for v in vocab_phrase_list]}))  # Get list of dicts
+                
+                # Define custom Anki model with provided templates and CSS
+                model_id = random.randrange(1 << 30, 1 << 31)
+                my_model = genanki.Model(
+                    model_id,
+                    'Custom Vocab Cloze',
+                    fields=[
+                        {'name': 'Text'},
+                        {'name': 'Pronunciation'},
+                        {'name': 'Definition'},
+                        {'name': 'Examples'},
+                        {'name': 'Synonyms'},
+                        {'name': 'Antonyms'},
+                        {'name': 'Etymology'},
+                        {'name': 'Audio'},
+                    ],
+                    templates=[
+                        {
+                            'name': 'Cloze',
+                            'qfmt': '''
+<div class="vellum-focus-container front">
+  <div class="prompt-text">
+    {{cloze:Text}}
+  </div>
+</div>
+''',
+                            'afmt': '''
+<div class="vellum-focus-container back">
+  <div class="prompt-text solved-text">
+    {{cloze:Text}}
+  </div>
+</div>
 
-st.caption("✅ 100% identical to Colab + API key changer + better sentence capitalization + responsive wide layout + session state for re-renders + progress bar + Anki audio")
+<div class="vellum-detail-container">
+  {{#Audio}}
+  <div class="vellum-section audio">
+    <div class="section-header">🔊 AUDIO</div>
+    <div class="content">{{Audio}}</div>
+  </div>
+  {{/Audio}}
+
+  {{#Definition}}
+  <div class="vellum-section definition">
+    <div class="section-header">📜 DEFINITION</div>
+    <div class="content">{{Definition}}</div>
+  </div>
+  {{/Definition}}
+  
+  {{#Pronunciation}}
+  <div class="vellum-section pronunciation">
+    <div class="section-header">🗣️ PRONUNCIATION</div>
+    <div class="content">{{Pronunciation}}</div>
+  </div>
+  {{/Pronunciation}}
+
+  {{#Examples}}
+  <div class="vellum-section examples">
+    <div class="section-header">🖋️ EXAMPLES</div>
+    <div class="content">{{Examples}}</div>
+  </div>
+  {{/Examples}}
+
+  {{#Synonyms}}
+  <div class="vellum-section synonyms">
+    <div class="section-header">➕ SYNONYMS</div>
+    <div class="content">{{Synonyms}}</div>
+  </div>
+  {{/Synonyms}}
+
+  {{#Antonyms}}
+  <div class="vellum-section antonyms">
+    <div class="section-header">➖ ANTONYMS</div>
+    <div class="content">{{Antonyms}}</div>
+  </div>
+  {{/Antonyms}}
+
+  {{#Etymology}}
+  <div class="vellum-section etymology">
+    <div class="section-header">🏛️ ETYMOLOGY</div>
+    <div class="content">{{Etymology}}</div>
+  </div>
+  {{/Etymology}}
+</div>
+''',
+                        },
+                    ],
+                    css='''
+/* --- Global Settings (Cyberpunk Glitch Theme) --- */
+.card {
+  font-family: 'Roboto Mono', 'Consolas', monospace; /* Monospace font for a terminal/glitch feel */
+  font-size: 18px;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #00ff41; /* Primary Neon Green/Matrix color */
+  
+  /* Deep, dark background with subtle texture */
+  background-color: #111111; 
+  background-image: repeating-linear-gradient(0deg, #181818, #181818 1px, #111111 1px, #111111 20px);
+  
+  padding: 30px 20px;
+  max-width: 800px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  text-align: left;
+}
+
+/* --- Night Mode (Minimal change, maybe subtle shift) --- */
+.nightMode .card {
+  color: #00aaff; /* Shift to Neon Blue in Night Mode */
+  background-color: #080808;
+}
+
+/* --- UNIFIED FRONT/BACK FOCUS CONTAINER (THE DISPLAY) --- */
+.vellum-focus-container {
+  /* High-tech screen/display frame */
+  background: #0d0d0d;
+  padding: 30px 20px;
+  margin: 0 auto 40px;
+  max-width: 95%;
+  border-radius: 4px; 
+  
+  /* Digital Border / Light Glitch Effect */
+  border: 2px solid #00ff41; 
+  box-shadow: 
+    0 0 5px #00ff41,       /* Inner glow */
+    0 0 15px rgba(0, 255, 65, 0.4), /* Outer halo */
+    0 4px 8px rgba(0, 0, 0, 0.5); /* Deep shadow */
+    
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.nightMode .vellum-focus-container {
+  border: 2px solid #00aaff;
+  box-shadow: 
+    0 0 5px #00aaff,
+    0 0 15px rgba(0, 170, 255, 0.4),
+    0 4px 8px rgba(0, 0, 0, 0.6);
+}
+
+.prompt-text {
+  font-family: 'Electrolize', 'Arial Narrow', sans-serif; /* Stylized, condensed font */
+  font-size: clamp(2.0em, 6vw, 3.0em); 
+  font-weight: 900;
+  color: #ffffff; /* Bright white/light for high contrast */
+  text-shadow: 
+    1px 1px 0 #ff00ff, /* Magenta glitch offset */
+    -1px -1px 0 #00ffff; /* Cyan glitch offset */
+  font-style: normal;
+}
+
+.nightMode .prompt-text {
+  color: #f0f8ff; 
+  text-shadow: 
+    1px 1px 0 #ff00ff,
+    -1px -1px 0 #00ffff;
+}
+
+/* --- SPECIFIC STYLING FOR FRONT (Hidden Cloze) - Diperlukan di Styling agar .cloze tetap berfungsi di Front Template juga */
+.vellum-focus-container.front .cloze {
+  color: #111111; /* Hidden color, close to background */
+  background-color: #00ff41; /* Highlighted block */
+  border-radius: 2px;
+  padding: 2px 4px;
+  line-height: 1;
+  text-decoration: none;
+  font-style: normal;
+}
+
+.nightMode .vellum-focus-container.front .cloze {
+  background-color: #00aaff;
+  color: #0d0d0d;
+}
+
+/* --- SPECIFIC STYLING FOR BACK (Solved Cloze) --- */
+.vellum-focus-container.back .prompt-text {
+  color: #e0e0e0; 
+}
+
+.vellum-focus-container.back .cloze {
+  /* Solved word in Glitch Neon */
+  color: #ff00ff; /* Neon Magenta/Pink */
+  font-weight: 900;
+  background: none;
+  padding: 0 3px;
+  text-decoration: none;
+  border-bottom: 3px double #00ffff; /* Cyan underline */
+  text-shadow: 
+    0 0 5px #ff00ff; /* Glow */
+  font-style: normal;
+}
+
+.nightMode .vellum-focus-container.back .cloze {
+  color: #00ffff; /* Neon Cyan */
+  border-bottom: 3px double #ff00ff; /* Magenta underline */
+  text-shadow: 
+    0 0 5px #00ffff;
+}
+
+/* --- DETAIL SECTIONS (Data Blocks) --- */
+.vellum-detail-container {
+  padding: 10px 0;
+}
+
+.vellum-section {
+  margin: 15px 0;
+  padding: 10px 0;
+  border-bottom: 1px dashed #00ff41; 
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+.nightMode .vellum-section {
+  border-bottom: 1px dashed #00aaff;
+}
+
+.section-header {
+  font-size: 1.1em;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: #00ffff; /* Secondary Neon Cyan */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-left: 3px solid; 
+  padding-left: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.nightMode .section-header {
+  color: #ff00ff; /* Secondary Neon Magenta */
+}
+
+.content {
+  font-size: 0.95em;
+  color: #aaffaa; /* Lighter green for content */
+  padding: 0 0 0 13px; 
+}
+
+.nightMode .content {
+  color: #99ccff; /* Lighter blue for content */
+}
+
+/* Colored markers for sections (Data Stream Hues) */
+.vellum-section.definition .section-header { border-left-color: #00ff41; } 
+.vellum-section.pronunciation .section-header { border-left-color: #ff00ff; }
+.vellum-section.examples .section-header { border-left-color: #ffff00; } /* Neon Yellow */
+.vellum-section.synonyms .section-header { border-left-color: #ff00ff; } 
+.vellum-section.antonyms .section-header { border-left-color: #ff4100; } /* Neon Red/Orange */
+.vellum-section.etymology .section-header { border-left-color: #00ffff; } 
+.vellum-section.audio .section-header { border-left-color: #00aaff; }  /* Added for audio */
+
+/* Type-Specific Content Styles */
+.pronunciation .content {
+  font-family: 'Consolas', monospace;
+  font-size: 1.05em;
+  font-weight: 500;
+  color: #ffff00; /* Pronunciation in Neon Yellow */
+}
+
+.examples .content {
+  color: #77ff77;
+  font-style: italic;
+  font-size: 0.9em;
+}
+
+.audio .content {
+  text-align: center;  /* Center audio playback */
+}
+
+/* Enhanced Responsive adjustment */
+@media (max-width: 600px) {  /* Adjusted from 480px for better mobile */
+  .card {
+    font-size: 16px;
+    padding: 15px 10px;
+  }
+  .vellum-focus-container {
+    padding: 20px 10px;
+    max-width: 100%;
+  }
+  .prompt-text {
+    font-size: clamp(1.5em, 8vw, 2.5em);  /* Smaller clamp for mobile */
+  }
+  .vellum-section {
+    padding: 8px 0;
+  }
+  .section-header {
+    font-size: 1em;
+    gap: 5px;
+  }
+  .content {
+    font-size: 0.9em;
+    padding-left: 10px;
+  }
+}
+
+@media (max-width: 400px) {
+  .card {
+    padding: 10px 5px;
+  }
+  .vellum-focus-container {
+    padding: 15px 5px;
+  }
+}
+''',
+                    model_type=genanki.CLOZE
+                )
+
+                # Create deck
+                deck_id = random.randrange(1 << 30, 1 << 31)
+                my_deck = genanki.Deck(deck_id, 'My Cloud Vocab Deck')
+
+                # Add notes
+                for note_dict in anki_notes:
+                    my_note = genanki.Note(
+                        model=my_model,
+                        fields=note_dict
+                    )
+                    my_deck.add_note(my_note)
+
+                # Create package and write to file
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"anki_cards_export_{timestamp}.apkg"
+                genanki.Package(my_deck).write_to_file(filename)
+
+                # Read bytes for download
+                with open(filename, 'rb') as f:
+                    apkg_bytes = f.read()
+
+                st.success(f"🎉 {len(anki_notes)} cards ready!")
+                st.download_button("📥 Download Anki APKG", apkg_bytes, filename, "application/zip", use_container_width=True)
+                # Optional: Preview first few as DF
+                st.dataframe(pd.DataFrame(anki_notes).head(3), use_container_width=True)
+
+st.caption("✅ 100% identical to Colab + API key changer + better sentence capitalization + responsive wide layout + session state for re-renders + progress bar + Anki audio + .apkg export (install genanki via pip)")
