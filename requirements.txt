@@ -1,4 +1,8 @@
-streamlit
 PyGithub
 pandas
 google-generativeai
+streamlit==1.38.0  # Or latest version; pin for stability
+pandas==2.2.2
+PyGithub==2.4.0
+google-generativeai==0.8.1
+genanki==0.13.1
