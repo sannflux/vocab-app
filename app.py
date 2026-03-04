@@ -285,8 +285,75 @@ with tab3:
     if df.empty:
         st.info("Add words first!")
     else:
+        if 'generation_future' not in st.session_state:
+            st.session_state.generation_future = None
+        if 'generation_progress' not in st.session_state:
+            st.session_state.generation_progress = 0.0
+        if 'generation_results' not in st.session_state:
+            st.session_state.generation_results = None
+        if 'generation_queue' not in st.session_state:
+            st.session_state.generation_queue = queue.Queue()  # For progress updates
+
+        def run_generation_in_background(q):
+            try:
+                vocab_phrase_list = df[['vocab', 'phrase']].values.tolist()
+                batch_size = 5
+                num_batches = (len(vocab_phrase_list) + batch_size - 1) // batch_size
+                all_card_data = []
+                for i in range(num_batches):
+                    if st.session_state.get('cancel_generation', False):  # Check for cancel
+                        raise Exception("Generation canceled by user")
+                    batch_start = i * batch_size
+                    batch_end = min(batch_start + batch_size, len(vocab_phrase_list))
+                    batch = vocab_phrase_list[batch_start:batch_end]
+                    batch_data = generate_anki_card_data_batched(batch)
+                    all_card_data.extend(batch_data)
+                    progress = (i + 1) / num_batches
+                    q.put(progress)  # Send progress to queue
+                anki_notes = generate_anki_notes(pd.DataFrame({"vocab": [v[0] for v in vocab_phrase_list], "phrase": [v[1] for v in vocab_phrase_list]}))
+                q.put(anki_notes)  # Send final results
+            except Exception as e:
+                q.put(e)  # Send error
+
         if st.button("🚀 Generate Anki Cards with Gemini AI", type="primary", use_container_width=True):
-            with st.spinner("🧠 Generating (Synonyms capitalized + sentence casing fixed)..."):
+            if st.session_state.generation_future is None:  # Start only if not running
+                st.session_state.cancel_generation = False
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                st.session_state.generation_future = executor.submit(run_generation_in_background, st.session_state.generation_queue)
+                st.session_state.generation_progress = 0.0
+                st.session_state.generation_results = None
+                st.rerun()  # Rerun to show progress immediately
+
+        # Monitor progress on every run
+        if st.session_state.generation_future is not None:
+            with st.spinner("🧠 Generating... (Do not interact until done)"):
+                progress_bar = st.progress(st.session_state.generation_progress)
+                while not st.session_state.generation_queue.empty():
+                    item = st.session_state.generation_queue.get()
+                    if isinstance(item, float):
+                        st.session_state.generation_progress = item
+                        progress_bar.progress(item)
+                    elif isinstance(item, list):  # anki_notes
+                        st.session_state.generation_results = item
+                    elif isinstance(item, Exception):
+                        st.error(f"Error: {str(item)}")
+                        st.session_state.generation_future = None
+
+                if st.session_state.generation_future.done():
+                    st.session_state.generation_future = None  # Reset for next run
+
+            if st.button("❌ Cancel Generation"):
+                st.session_state.cancel_generation = True
+                st.rerun()
+
+        if st.session_state.generation_results is not None:
+            anki_notes = st.session_state.generation_results
+            # ... (rest of your Anki model/deck/package code here, using anki_notes)
+            # (Generate .apkg as before and provide download)
+            st.success(f"🎉 {len(anki_notes)} cards ready!")
+            # ... (download button and preview)
+
+            st.session_state.generation_results = None
                 progress_bar = st.progress(0)
                 vocab_phrase_list = df[['vocab', 'phrase']].values.tolist()
                 batch_size = 5
