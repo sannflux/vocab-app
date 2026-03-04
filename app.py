@@ -18,7 +18,7 @@ token = st.secrets["GITHUB_TOKEN"]
 repo_name = st.secrets["REPO_NAME"]
 DEFAULT_GEMINI_KEY = st.secrets["GEMINI_API_KEY"]
 
-# Dynamic API key (new feature)
+# Dynamic API key
 if "gemini_key" not in st.session_state:
     st.session_state.gemini_key = DEFAULT_GEMINI_KEY
 if "model" not in st.session_state:
@@ -51,7 +51,7 @@ def get_gemini_model():
 
 USER_NATIVE_LANGUAGE = "Indonesian"
 
-# ========================== EXACT COLAB CLEANING FUNCTIONS ==========================
+# ========================== CLEANING FUNCTIONS ==========================
 def cap_first(s):
     if not isinstance(s, str) or not s: return s
     s = s.strip()
@@ -90,7 +90,7 @@ def fix_vocab_casing_in_phrase(phrase, vocab_raw):
     pattern = r'\b' + re.escape(vocab_raw.lower()) + r'\b'
     return re.sub(pattern, vocab_raw, phrase, flags=re.IGNORECASE)
 
-# ========================== BATCH GENERATOR (strict plain text) ==========================
+# ========================== BATCH GENERATOR ==========================
 def run_with_timeout(func, args=(), kwargs=None, timeout=40):
     if kwargs is None: kwargs = {}
     result = {"value": None}
@@ -106,14 +106,30 @@ def generate_anki_card_data_batched(vocab_phrase_list, native_lang=USER_NATIVE_L
     model = get_gemini_model()
     if not model: return []
     all_card_data = []
-    for i in range(0, len(vocab_phrase_list), batch_size):
+    
+    # NEW: Initialize progress bar
+    progress_bar = st.progress(0)
+    total_items = len(vocab_phrase_list)
+    
+    for i in range(0, total_items, batch_size):
+        # Update progress bar
+        current_progress = min(i / total_items, 1.0)
+        progress_bar.progress(current_progress, text=f"Processing {i}/{total_items} words...")
+        
         batch = vocab_phrase_list[i:i+batch_size]
         batch_dicts = [{"vocab": v[0], "phrase": v[1]} for v in batch]
+        
+        # UPDATED PROMPT: Context awareness
         prompt = f"""You are an expert lexicographer. Output ONLY a JSON array.
-RULES: Copy ALL fields exactly. If phrase empty: generate ONE simple sentence (max 12 words). EXACT vocab unchanged.
+RULES: 
+1. Copy ALL fields exactly. 
+2. If phrase is provided: Define the vocab word based STRICTLY on how it is used in that phrase.
+3. If phrase is empty: generate ONE simple sentence (max 12 words) using the most common definition.
+4. EXACT vocab unchanged.
 NEVER use markdown, asterisks, bold, italic, or any formatting. Plain text only.
 OUTPUT FORMAT: [{{"vocab": "...", "phrase": "...", "translation": "{native_lang} meaning", "part_of_speech": "...", "pronunciation_ipa": "/.../", "definition_english": "...", "example_sentences": ["..."], "synonyms_antonyms": {{"synonyms": [], "antonyms": []}}, "etymology": "Plain text only."}}]
 BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
+
         for attempt in range(4):
             response = run_with_timeout(model.generate_content, args=(prompt,), timeout=40)
             if response is None: time.sleep(2); continue
@@ -129,12 +145,14 @@ BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
                     v = item["vocab"]
                     all_card_data.append({"vocab":v,"phrase":item["phrase"] or f"{v}.","translation":"?","part_of_speech":"","pronunciation_ipa":"","definition_english":"","example_sentences":[],"synonyms_antonyms":{"synonyms":[],"antonyms":[]},"etymology":""})
         time.sleep(1)
+        
+    progress_bar.progress(1.0, text="Finalizing...")
+    time.sleep(0.5)
+    progress_bar.empty()
     return all_card_data
 
-# UPDATED: Added batch_size argument here
 def generate_anki_notes(df, batch_size=5):
     vocab_phrase_list = df[['vocab', 'phrase']].values.tolist()
-    # Pass batch_size to the generator
     all_card_data = generate_anki_card_data_batched(vocab_phrase_list, batch_size=batch_size)
     anki_notes = []
     for card_data in all_card_data:
@@ -198,7 +216,7 @@ if not df.empty:
     wotd_vocab = row["vocab"]
     wotd_phrase = row["phrase"]
 
-# ========================== SIDEBAR (API KEY CHANGER) ==========================
+# ========================== SIDEBAR ==========================
 with st.sidebar:
     st.header("🌟 Word of the Day")
     if wotd_vocab:
@@ -227,14 +245,39 @@ tab1, tab2, tab3 = st.tabs(["➕ Add New Word", "✏️ Edit / Delete", "📇 Ge
 
 with tab1:
     st.subheader("Add a new vocabulary word")
-    with st.form("add_form", clear_on_submit=True):
+    with st.form("add_form", clear_on_submit=False): # Changed to False to handle state
         v = st.text_input("📝 Vocab (required)", placeholder="e.g. serendipity").lower().strip()
         p_raw = st.text_input("🔤 Phrase / Example (type 1 to skip)", placeholder="I found it by serendipity!").strip()
-        if st.form_submit_button("💾 Save to Cloud", use_container_width=True):
-            if v and v not in df['vocab'].values:
-                p = "" if p_raw.upper() == "1" else p_raw.capitalize()
+        
+        # NEW: Logic for button behavior
+        exists = False
+        if v and not df.empty and v in df['vocab'].values:
+            exists = True
+            st.warning(f"⚠️ '{v}' already exists in your list.")
+            
+        col1, col2 = st.columns([1,1])
+        with col1:
+            label = "🔄 Update Phrase" if exists else "💾 Save to Cloud"
+            submitted = st.form_submit_button(label, use_container_width=True)
+
+    if submitted:
+        if v:
+            p = "" if p_raw.upper() == "1" else p_raw.capitalize()
+            
+            if exists:
+                # Update existing phrase
+                df.loc[df['vocab'] == v, 'phrase'] = p
+                if save_to_github(df): 
+                    st.success(f"✅ Phrase for '{v}' updated!")
+                    time.sleep(1)
+                    st.rerun()
+            else:
+                # Add new word
                 updated = pd.concat([df, pd.DataFrame([{"vocab": v, "phrase": p}])], ignore_index=True)
-                if save_to_github(updated): st.success(f"✅ '{v}' added!"); st.rerun()
+                if save_to_github(updated): 
+                    st.success(f"✅ '{v}' added!")
+                    time.sleep(1)
+                    st.rerun()
 
 with tab2:
     if df.empty:
@@ -267,7 +310,6 @@ with tab3:
     if df.empty:
         st.info("Add words first!")
     else:
-        # UPDATED: Slider to control batch size
         batch_size = st.slider(
             "⚡ Batch Size (Lower if timeouts occur, Higher for speed)", 
             min_value=1, 
@@ -276,14 +318,15 @@ with tab3:
         )
 
         if st.button("🚀 Generate Anki Cards with Gemini AI", type="primary", use_container_width=True):
-            with st.spinner(f"🧠 Generating with Batch Size {batch_size}..."):
-                # Pass batch_size to the function
-                anki_df = generate_anki_notes(df, batch_size=batch_size)
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"anki_cards_export_{timestamp}.csv"
-                csv_bytes = anki_df.to_csv(index=False, header=False, encoding="utf-8-sig").encode()
-                st.success(f"🎉 {len(anki_df)} cards ready!")
-                st.download_button("📥 Download Anki CSV", csv_bytes, filename, "text/csv", use_container_width=True)
-                st.dataframe(anki_df.head(3), use_container_width=True)
+            # No spinner needed here because we use the progress bar inside the function
+            anki_df = generate_anki_notes(df, batch_size=batch_size)
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"anki_cards_export_{timestamp}.csv"
+            csv_bytes = anki_df.to_csv(index=False, header=False, encoding="utf-8-sig").encode()
+            
+            st.success(f"🎉 {len(anki_df)} cards ready!")
+            st.download_button("📥 Download Anki CSV", csv_bytes, filename, "text/csv", use_container_width=True)
+            st.dataframe(anki_df.head(3), use_container_width=True)
 
-st.caption("✅ 100% identical to Colab + API key changer + better sentence capitalization")
+st.caption("✅ 100% identical to Colab + API key changer + smart duplicate detection")
