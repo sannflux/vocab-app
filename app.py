@@ -85,7 +85,7 @@ def highlight_vocab(text, vocab_raw):
     pattern = r'\b' + re.escape(vocab_raw) + r'\b'
     return re.sub(pattern, f'<b><u>{vocab_raw}</u></b>', text, flags=re.IGNORECASE)
 
-def fix_vocab_casing_in_phrase(phrase, vocab_raw):  # ← NEW fix
+def fix_vocab_casing_in_phrase(phrase, vocab_raw):
     if not phrase or not vocab_raw: return phrase
     pattern = r'\b' + re.escape(vocab_raw.lower()) + r'\b'
     return re.sub(pattern, vocab_raw, phrase, flags=re.IGNORECASE)
@@ -131,9 +131,11 @@ BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
         time.sleep(1)
     return all_card_data
 
-def generate_anki_notes(df):
+# UPDATED: Added batch_size argument here
+def generate_anki_notes(df, batch_size=5):
     vocab_phrase_list = df[['vocab', 'phrase']].values.tolist()
-    all_card_data = generate_anki_card_data_batched(vocab_phrase_list)
+    # Pass batch_size to the generator
+    all_card_data = generate_anki_card_data_batched(vocab_phrase_list, batch_size=batch_size)
     anki_notes = []
     for card_data in all_card_data:
         vocab_raw = (card_data.get("vocab", "") or "").strip()
@@ -142,7 +144,7 @@ def generate_anki_notes(df):
         phrase = clean_grammar(phrase)
         phrase = cap_each_sentence(phrase)
         phrase = ensure_trailing_dot(phrase)
-        phrase = fix_vocab_casing_in_phrase(phrase, vocab_raw)  # fixes capital issue
+        phrase = fix_vocab_casing_in_phrase(phrase, vocab_raw)
         formatted_phrase = highlight_vocab(phrase, vocab_raw) if phrase else ""
         translation = ensure_trailing_dot(clean_grammar(normalize_spaces(card_data.get("translation", "?"))))
         pos = card_data.get("part_of_speech", "").title()
@@ -265,9 +267,18 @@ with tab3:
     if df.empty:
         st.info("Add words first!")
     else:
+        # UPDATED: Slider to control batch size
+        batch_size = st.slider(
+            "⚡ Batch Size (Lower if timeouts occur, Higher for speed)", 
+            min_value=1, 
+            max_value=10, 
+            value=5
+        )
+
         if st.button("🚀 Generate Anki Cards with Gemini AI", type="primary", use_container_width=True):
-            with st.spinner("🧠 Generating (Synonyms capitalized + sentence casing fixed)..."):
-                anki_df = generate_anki_notes(df)
+            with st.spinner(f"🧠 Generating with Batch Size {batch_size}..."):
+                # Pass batch_size to the function
+                anki_df = generate_anki_notes(df, batch_size=batch_size)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"anki_cards_export_{timestamp}.csv"
                 csv_bytes = anki_df.to_csv(index=False, header=False, encoding="utf-8-sig").encode()
