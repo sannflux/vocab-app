@@ -9,7 +9,11 @@ import json
 import re
 import time
 import threading
-import genanki  # NEW: Requires pip install genanki
+try:
+    import genanki
+except ModuleNotFoundError:
+    st.error("genanki not installed. Add it to requirements.txt and redeploy.")
+    st.stop()
 
 # ========================== SETUP ==========================
 st.set_page_config(page_title="Vocab App", layout="wide", page_icon="📚")  # Changed to wide for better responsiveness
