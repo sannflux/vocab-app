@@ -9,7 +9,9 @@ import json
 import re
 import time
 import threading
-import genanki  # Requires pip install genanki (already in your requirements.txt)
+import genanki
+import concurrent.futures
+import queue
 
 # ========================== SETUP ==========================
 st.set_page_config(page_title="Vocab App", layout="wide", page_icon="📚")  # Changed to wide for better responsiveness
@@ -348,52 +350,32 @@ with tab3:
 
         if st.session_state.generation_results is not None:
             anki_notes = st.session_state.generation_results
-            # ... (rest of your Anki model/deck/package code here, using anki_notes)
-            # (Generate .apkg as before and provide download)
-            st.success(f"🎉 {len(anki_notes)} cards ready!")
-            # ... (download button and preview)
-
-            st.session_state.generation_results = None
-                progress_bar = st.progress(0)
-                vocab_phrase_list = df[['vocab', 'phrase']].values.tolist()
-                batch_size = 5
-                num_batches = (len(vocab_phrase_list) + batch_size - 1) // batch_size
-                all_card_data = []
-                for i in range(num_batches):
-                    batch_start = i * batch_size
-                    batch_end = min(batch_start + batch_size, len(vocab_phrase_list))
-                    batch = vocab_phrase_list[batch_start:batch_end]
-                    batch_data = generate_anki_card_data_batched(batch)  # Assuming batched function handles one batch
-                    all_card_data.extend(batch_data)
-                    progress_bar.progress((i + 1) / num_batches)
-                anki_notes = generate_anki_notes(pd.DataFrame({"vocab": [v[0] for v in vocab_phrase_list], "phrase": [v[1] for v in vocab_phrase_list]}))  # Get list of dicts
-                
-                # Define custom Anki model with provided templates and CSS
-                model_id = random.randrange(1 << 30, 1 << 31)
-                my_model = genanki.Model(
-                    model_id,
-                    'Custom Vocab Cloze',
-                    fields=[
-                        {'name': 'Text'},
-                        {'name': 'Pronunciation'},
-                        {'name': 'Definition'},
-                        {'name': 'Examples'},
-                        {'name': 'Synonyms'},
-                        {'name': 'Antonyms'},
-                        {'name': 'Etymology'},
-                        {'name': 'Audio'},
-                    ],
-                    templates=[
-                        {
-                            'name': 'Cloze',
-                            'qfmt': '''
+            # Define custom Anki model with provided templates and CSS
+            model_id = random.randrange(1 << 30, 1 << 31)
+            my_model = genanki.Model(
+                model_id,
+                'Custom Vocab Cloze',
+                fields=[
+                    {'name': 'Text'},
+                    {'name': 'Pronunciation'},
+                    {'name': 'Definition'},
+                    {'name': 'Examples'},
+                    {'name': 'Synonyms'},
+                    {'name': 'Antonyms'},
+                    {'name': 'Etymology'},
+                    {'name': 'Audio'},
+                ],
+                templates=[
+                    {
+                        'name': 'Cloze',
+                        'qfmt': '''
 <div class="vellum-focus-container front">
   <div class="prompt-text">
     {{cloze:Text}}
   </div>
 </div>
 ''',
-                            'afmt': '''
+                        'afmt': '''
 <div class="vellum-focus-container back">
   <div class="prompt-text solved-text">
     {{cloze:Text}}
@@ -451,9 +433,9 @@ with tab3:
   {{/Etymology}}
 </div>
 ''',
-                        },
-                    ],
-                    css='''
+                    },
+                ],
+                css='''
 /* --- Global Settings (Cyberpunk Glitch Theme) --- */
 .card {
   font-family: 'Roboto Mono', 'Consolas', monospace; /* Monospace font for a terminal/glitch feel */
@@ -674,33 +656,35 @@ with tab3:
   }
 }
 ''',
-                    model_type=genanki.CLOZE_MODEL  # Fixed: Changed from genanki.CLOZE to genanki.CLOZE_MODEL
+                model_type=genanki.CLOZE_MODEL
+            )
+
+            # Create deck
+            deck_id = random.randrange(1 << 30, 1 << 31)
+            my_deck = genanki.Deck(deck_id, 'My Cloud Vocab Deck')
+
+            # Add notes
+            for note_dict in anki_notes:
+                my_note = genanki.Note(
+                    model=my_model,
+                    fields=note_dict
                 )
+                my_deck.add_note(my_note)
 
-                # Create deck
-                deck_id = random.randrange(1 << 30, 1 << 31)
-                my_deck = genanki.Deck(deck_id, 'My Cloud Vocab Deck')
+            # Create package and write to file
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"anki_cards_export_{timestamp}.apkg"
+            genanki.Package(my_deck).write_to_file(filename)
 
-                # Add notes
-                for note_dict in anki_notes:
-                    my_note = genanki.Note(
-                        model=my_model,
-                        fields=note_dict
-                    )
-                    my_deck.add_note(my_note)
+            # Read bytes for download
+            with open(filename, 'rb') as f:
+                apkg_bytes = f.read()
 
-                # Create package and write to file
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"anki_cards_export_{timestamp}.apkg"
-                genanki.Package(my_deck).write_to_file(filename)
+            st.success(f"🎉 {len(anki_notes)} cards ready!")
+            st.download_button("📥 Download Anki APKG", apkg_bytes, filename, "application/zip", use_container_width=True)
+            # Optional: Preview first few as DF
+            st.dataframe(pd.DataFrame(anki_notes).head(3), use_container_width=True)
 
-                # Read bytes for download
-                with open(filename, 'rb') as f:
-                    apkg_bytes = f.read()
-
-                st.success(f"🎉 {len(anki_notes)} cards ready!")
-                st.download_button("📥 Download Anki APKG", apkg_bytes, filename, "application/zip", use_container_width=True)
-                # Optional: Preview first few as DF
-                st.dataframe(pd.DataFrame(anki_notes).head(3), use_container_width=True)
+            st.session_state.generation_results = None  # Clear after display
 
 st.caption("✅ 100% identical to Colab + API key changer + better sentence capitalization + responsive wide layout + session state for re-renders + progress bar + Anki audio + .apkg export (install genanki via pip)")
