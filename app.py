@@ -9,11 +9,7 @@ import json
 import re
 import time
 import threading
-try:
-    import genanki
-except ModuleNotFoundError:
-    st.error("genanki not installed. Add it to requirements.txt and redeploy.")
-    st.stop()
+import genanki  # Requires pip install genanki (already in your requirements.txt)
 
 # ========================== SETUP ==========================
 st.set_page_config(page_title="Vocab App", layout="wide", page_icon="📚")  # Changed to wide for better responsiveness
@@ -164,7 +160,7 @@ def generate_anki_notes(df):
         audio_field = f'[sound:https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q={vocab_raw}]'  # Added audio TTS URL
         anki_notes.append({"Text": text_field, "Pronunciation": pronunciation_field, "Definition": eng_def,
                            "Examples": examples_field, "Synonyms": synonyms_field, "Antonyms": antonyms_field, "Etymology": etymology, "Audio": audio_field})
-    return anki_notes  # Return list of dicts instead of DF for genanki
+    return anki_notes  # Return list of dicts for genanki
 
 # ========================== LOAD / SAVE / SPEECH / WOTD ==========================
 def load_data():
@@ -611,7 +607,7 @@ with tab3:
   }
 }
 ''',
-                    model_type=genanki.CLOZE
+                    model_type=genanki.CLOZE_MODEL  # Fixed: Changed from genanki.CLOZE to genanki.CLOZE_MODEL
                 )
 
                 # Create deck
