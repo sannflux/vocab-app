@@ -2,3 +2,6 @@ streamlit
 PyGithub
 pandas
 google-generativeai
+gTTS
+genanki
+
