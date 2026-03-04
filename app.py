@@ -165,6 +165,7 @@ def load_data():
     try:
         file_content = repo.get_contents("vocabulary.csv")
         df = pd.read_csv(io.StringIO(file_content.decoded_content.decode('utf-8')))
+        df['phrase'] = df['phrase'].fillna("")
         return df.sort_values(by="vocab", ignore_index=True)
     except:
         return pd.DataFrame(columns=['vocab', 'phrase'])
@@ -193,7 +194,7 @@ if not df.empty:
     random.seed(today_str)
     row = df.sample(n=1).iloc[0]
     wotd_vocab = row["vocab"]
-    wotd_phrase = row.get("phrase", "")
+    wotd_phrase = row["phrase"]
 
 # ========================== SIDEBAR (API KEY CHANGER) ==========================
 with st.sidebar:
