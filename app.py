@@ -11,7 +11,7 @@ import time
 import threading
 
 # ========================== SETUP ==========================
-st.set_page_config(page_title="Vocab App", layout="centered", page_icon="📚")
+st.set_page_config(page_title="Vocab App", layout="wide", page_icon="📚")  # Changed to wide for better responsiveness
 st.title("📚 My Cloud Vocab")
 
 token = st.secrets["GITHUB_TOKEN"]
@@ -156,8 +156,9 @@ def generate_anki_notes(df):
         etymology = normalize_spaces(card_data.get("etymology", ""))
         text_field = f"{formatted_phrase}<br><br>{vocab_cap}: <b>{{{{c1::{translation}}}}}</b>" if formatted_phrase else f"{vocab_cap}: <b>{{{{c1::{translation}}}}}</b>"
         pronunciation_field = f"<b>[{pos}]</b> {ipa}" if ipa else f"<b>[{pos}]</b>"
+        audio_field = f'[sound:https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q={vocab_raw}]'  # Added audio TTS URL
         anki_notes.append({"Text": text_field, "Pronunciation": pronunciation_field, "Definition": eng_def,
-                           "Examples": examples_field, "Synonyms": synonyms_field, "Antonyms": antonyms_field, "Etymology": etymology})
+                           "Examples": examples_field, "Synonyms": synonyms_field, "Antonyms": antonyms_field, "Etymology": etymology, "Audio": audio_field})
     return pd.DataFrame(anki_notes)
 
 # ========================== LOAD / SAVE / SPEECH / WOTD ==========================
@@ -180,7 +181,10 @@ def save_to_github(dataframe):
             repo.create_file("vocabulary.csv", "Initial commit", csv_data)
     return True
 
-df = load_data()
+if 'df' not in st.session_state:
+    st.session_state.df = load_data()
+
+df = st.session_state.df
 
 def speak_word(text: str, lang: str = "en-US"):
     if not text: return
@@ -211,7 +215,10 @@ with st.sidebar:
         st.rerun()
     st.divider()
     lang_options = {"🇬🇧 English (US)": "en-US", "🇮🇩 Indonesian": "id-ID", "🇯🇵 Japanese": "ja-JP"}
-    selected_lang_name = st.selectbox("🎙️ Speech Language", list(lang_options.keys()), index=0)
+    if 'selected_lang_name' not in st.session_state:
+        st.session_state.selected_lang_name = list(lang_options.keys())[0]
+    selected_lang_name = st.selectbox("🎙️ Speech Language", list(lang_options.keys()), index=list(lang_options.keys()).index(st.session_state.selected_lang_name))
+    st.session_state.selected_lang_name = selected_lang_name
     speech_lang = lang_options[selected_lang_name]
     if wotd_vocab:
         c1, c2 = st.columns(2)
@@ -226,34 +233,46 @@ tab1, tab2, tab3 = st.tabs(["➕ Add New Word", "✏️ Edit / Delete", "📇 Ge
 with tab1:
     st.subheader("Add a new vocabulary word")
     with st.form("add_form", clear_on_submit=True):
-        v = st.text_input("📝 Vocab (required)", placeholder="e.g. serendipity").lower().strip()
-        p_raw = st.text_input("🔤 Phrase / Example (type 1 to skip)", placeholder="I found it by serendipity!").strip()
+        v = st.text_input("📝 Vocab (required)", placeholder="e.g. serendipity", key="add_vocab").lower().strip()
+        p_raw = st.text_input("🔤 Phrase / Example (type 1 to skip)", placeholder="I found it by serendipity!", key="add_phrase").strip()
         if st.form_submit_button("💾 Save to Cloud", use_container_width=True):
             if v and v not in df['vocab'].values:
                 p = "" if p_raw.upper() == "1" else p_raw.capitalize()
                 updated = pd.concat([df, pd.DataFrame([{"vocab": v, "phrase": p}])], ignore_index=True)
-                if save_to_github(updated): st.success(f"✅ '{v}' added!"); st.rerun()
+                if save_to_github(updated): 
+                    st.success(f"✅ '{v}' added!")
+                    st.session_state.df = updated  # Update session state to reduce reruns
+                    st.rerun()
 
 with tab2:
     if df.empty:
         st.info("Add words first!")
     else:
         st.subheader(f"✏️ Edit List ({len(df)} words)")
-        search = st.text_input("🔎 Search...", "").lower().strip()
+        if 'search' not in st.session_state:
+            st.session_state.search = ""
+        st.session_state.search = st.text_input("🔎 Search...", value=st.session_state.search, key="edit_search").lower().strip()
+        search = st.session_state.search
         display_df = df[df['vocab'].str.contains(search, case=False)] if search else df
-        edited = st.data_editor(display_df, num_rows="dynamic", use_container_width=True, hide_index=True)
+        edited = st.data_editor(display_df, num_rows="dynamic", use_container_width=True, hide_index=True, key="data_editor")
         col1, col2 = st.columns([3,1])
         with col1:
             if st.button("💾 Save Changes to Cloud", type="primary", use_container_width=True):
+                edited = edited.drop_duplicates(subset=['vocab'])  # Prevent duplicates
                 if save_to_github(edited.sort_values(by="vocab", ignore_index=True)):
-                    st.success("✅ Cloud updated!"); st.rerun()
+                    st.success("✅ Cloud updated!")
+                    st.session_state.df = edited.sort_values(by="vocab", ignore_index=True)  # Update session
+                    st.rerun()
         with col2:
             csv = edited.to_csv(index=False).encode()
             st.download_button("📥 Download CSV", csv, "my_vocabulary.csv", "text/csv", use_container_width=True)
         st.divider()
         st.subheader("🔊 Quick Audio Practice")
-        quick_word = st.selectbox("Choose word:", sorted(df["vocab"].tolist()))
-        quick_phrase = df[df["vocab"]==quick_word]["phrase"].iloc[0]
+        if 'quick_word' not in st.session_state:
+            st.session_state.quick_word = sorted(df["vocab"].tolist())[0] if df["vocab"].tolist() else None
+        quick_word = st.selectbox("Choose word:", sorted(df["vocab"].tolist()), index=sorted(df["vocab"].tolist()).index(st.session_state.quick_word) if st.session_state.quick_word in df["vocab"].tolist() else 0)
+        st.session_state.quick_word = quick_word
+        quick_phrase = df[df["vocab"]==quick_word]["phrase"].iloc[0] if quick_word else ""
         c1, c2 = st.columns(2)
         with c1: 
             if st.button("🔊 Speak Vocab", key="q_v"): speak_word(quick_word, speech_lang)
@@ -267,7 +286,19 @@ with tab3:
     else:
         if st.button("🚀 Generate Anki Cards with Gemini AI", type="primary", use_container_width=True):
             with st.spinner("🧠 Generating (Synonyms capitalized + sentence casing fixed)..."):
-                anki_df = generate_anki_notes(df)
+                progress_bar = st.progress(0)
+                vocab_phrase_list = df[['vocab', 'phrase']].values.tolist()
+                batch_size = 5
+                num_batches = (len(vocab_phrase_list) + batch_size - 1) // batch_size
+                all_card_data = []
+                for i in range(num_batches):
+                    batch_start = i * batch_size
+                    batch_end = min(batch_start + batch_size, len(vocab_phrase_list))
+                    batch = vocab_phrase_list[batch_start:batch_end]
+                    batch_data = generate_anki_card_data_batched(batch)  # Assuming batched function handles one batch
+                    all_card_data.extend(batch_data)
+                    progress_bar.progress((i + 1) / num_batches)
+                anki_df = generate_anki_notes(pd.DataFrame({"vocab": [v[0] for v in vocab_phrase_list], "phrase": [v[1] for v in vocab_phrase_list]}))  # Recompute with all data
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"anki_cards_export_{timestamp}.csv"
                 csv_bytes = anki_df.to_csv(index=False, header=False, encoding="utf-8-sig").encode()
@@ -275,4 +306,4 @@ with tab3:
                 st.download_button("📥 Download Anki CSV", csv_bytes, filename, "text/csv", use_container_width=True)
                 st.dataframe(anki_df.head(3), use_container_width=True)
 
-st.caption("✅ 100% identical to Colab + API key changer + better sentence capitalization")
+st.caption("✅ 100% identical to Colab + API key changer + better sentence capitalization + responsive wide layout + session state for re-renders + progress bar + Anki audio")
