@@ -627,7 +627,7 @@ with tab3:
     if df.empty:
         st.info("Add words first!")
     else:
-        deck_name_input = st.text_input("📦 Deck Name", value="My Cyberpunk Vocab")
+        deck_name_input = st.text_input("📦 Deck Name", value="-English Learning::Vocabulary")
         c1, c2 = st.columns(2)
         with c1: batch_size = st.slider("⚡ Batch Size (AI)", 1, 10, 5)
         with c2: include_audio = st.checkbox("🔊 Generate Audio", value=True)
