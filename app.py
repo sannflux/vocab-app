@@ -569,34 +569,48 @@ with st.sidebar:
 tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit", "📇 Generate Anki (Cyberpunk)"])
 
 with tab1:
-    st.subheader("Add new word")
-    with st.form("add_form", clear_on_submit=False):
-        v = st.text_input("📝 Vocab", placeholder="e.g. serendipity").lower().strip()
-        p_raw = st.text_input("🔤 Phrase (type 1 to skip)", placeholder="I found it by serendipity!").strip()
-        
-        exists = False
-        if v and not df.empty and v in df['vocab'].values:
-            exists = True
-            st.warning(f"⚠️ '{v}' already exists.")
-            
-        col1, col2 = st.columns([1,1])
-        with col1:
-            label = "🔄 Update Phrase" if exists else "💾 Save to Cloud"
-            submitted = st.form_submit_button(label, use_container_width=True)
+
+# ... inside your "Add" tab ...
+
+st.subheader("➕ Add New Vocabulary")
+
+# We create a form and set clear_on_submit to True
+with st.form("add_vocab_form", clear_on_submit=True):
+    # The input fields are now inside the 'with' block
+    new_vocab = st.text_input("Vocabulary Word", placeholder="e.g., Serendipity")
+    new_phrase = st.text_input("Context Phrase", placeholder="e.g., It was pure serendipity that we met.")
+    
+    # The button must be a form_submit_button
+    submitted = st.form_submit_button("🚀 Save to Cloud")
 
     if submitted:
-        if v:
-            p = "" if p_raw.upper() == "1" else p_raw.capitalize()
-            if exists:
-                df.loc[df['vocab'] == v, 'phrase'] = p
-                if save_to_github(df): 
-                    st.success(f"✅ Phrase for '{v}' updated!")
-                    time.sleep(1); st.rerun()
+        if not new_vocab:
+            st.error("⚠️ Vocabulary word cannot be empty.")
+        else:
+            # Check for duplicates
+            if new_vocab in df['Vocab'].values:
+                st.warning(f"'{new_vocab}' already exists in your list!")
             else:
-                updated = pd.concat([df, pd.DataFrame([{"vocab": v, "phrase": p}])], ignore_index=True)
-                if save_to_github(updated): 
-                    st.success(f"✅ '{v}' added!")
-                    time.sleep(1); st.rerun()
+                # 1. Create a temporary dataframe for the new row
+                new_row = pd.DataFrame([{
+                    'Vocab': new_vocab, 
+                    'Phrase': new_phrase if new_phrase else "1" # Handle the "1" logic mentioned in your doc
+                }])
+                
+                # 2. Append to existing data
+                updated_df = pd.concat([df, new_row], ignore_index=True)
+                
+                # 3. Save to GitHub
+                try:
+                    save_to_github(updated_df)
+                    st.toast(f"✅ Successfully added: {new_vocab}!", icon='🎉')
+                    
+                    # Note: Because clear_on_submit=True is set, 
+                    # the inputs will be empty on the next visual update.
+                except Exception as e:
+                    st.error(f"Failed to save: {e}")
+
+
 
 with tab2:
     if df.empty: st.info("Add words first!")
