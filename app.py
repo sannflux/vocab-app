@@ -617,7 +617,7 @@ with tabs[0]:  # This corresponds to your "➕ Add" Tab
             except Exception as e:
                 st.error(f"Error saving to GitHub: {e}")
                 
-with tab2
+with tab2:
     if df.empty: st.info("Add words first!")
     else:
         st.subheader(f"✏️ Edit List ({len(df)} words)")
