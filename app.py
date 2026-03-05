@@ -568,51 +568,56 @@ with st.sidebar:
 # ========================== TABS ==========================
 tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit", "📇 Generate Anki (Cyberpunk)"])
 
-with tab1:
+with tabs[0]:  # This corresponds to your "➕ Add" Tab
+    st.header("Add New Vocabulary")
 
-# ... inside your "Add" tab ...
+    # 1. Initialize Session State for inputs if they don't exist
+    if "new_vocab" not in st.session_state:
+        st.session_state["new_vocab"] = ""
+    if "new_phrase" not in st.session_state:
+        st.session_state["new_phrase"] = ""
 
-st.subheader("➕ Add New Vocabulary")
+    # 2. Bind the inputs to these session state keys
+    # Note: We remove the 'value' logic and rely on 'key'
+    vocab_input = st.text_input("Vocab", key="new_vocab")
+    phrase_input = st.text_input("Phrase", key="new_phrase")
 
-# We create a form and set clear_on_submit to True
-with st.form("add_vocab_form", clear_on_submit=True):
-    # The input fields are now inside the 'with' block
-    new_vocab = st.text_input("Vocabulary Word", placeholder="e.g., Serendipity")
-    new_phrase = st.text_input("Context Phrase", placeholder="e.g., It was pure serendipity that we met.")
-    
-    # The button must be a form_submit_button
-    submitted = st.form_submit_button("🚀 Save to Cloud")
+    # Real-time validation (as per your original doc)
+    if vocab_input and vocab_input in df["Vocab"].values:
+        st.warning(f"⚠️ '{vocab_input}' already exists!")
+        # You might show an 'Update' button here, but let's focus on the 'Save' flow
 
-    if submitted:
-        if not new_vocab:
-            st.error("⚠️ Vocabulary word cannot be empty.")
+    # 3. The Save Button Logic
+    if st.button("Save to Cloud"):
+        if not vocab_input:
+            st.error("Please enter a vocabulary word.")
         else:
-            # Check for duplicates
-            if new_vocab in df['Vocab'].values:
-                st.warning(f"'{new_vocab}' already exists in your list!")
-            else:
-                # 1. Create a temporary dataframe for the new row
-                new_row = pd.DataFrame([{
-                    'Vocab': new_vocab, 
-                    'Phrase': new_phrase if new_phrase else "1" # Handle the "1" logic mentioned in your doc
-                }])
+            # Prepare the new row
+            # If phrase is empty, use "1" as per your specific logic
+            final_phrase = phrase_input if phrase_input.strip() else "1"
+            
+            new_data = pd.DataFrame([{"Vocab": vocab_input, "Phrase": final_phrase}])
+            updated_df = pd.concat([df, new_data], ignore_index=True)
+
+            try:
+                # Save to GitHub
+                save_to_github(updated_df)
                 
-                # 2. Append to existing data
-                updated_df = pd.concat([df, new_row], ignore_index=True)
+                # Success Message
+                st.success(f"✅ Saved: **{vocab_input}**")
                 
-                # 3. Save to GitHub
-                try:
-                    save_to_github(updated_df)
-                    st.toast(f"✅ Successfully added: {new_vocab}!", icon='🎉')
-                    
-                    # Note: Because clear_on_submit=True is set, 
-                    # the inputs will be empty on the next visual update.
-                except Exception as e:
-                    st.error(f"Failed to save: {e}")
-
-
-
-with tab2:
+                # --- THE FIX: CLEAR THE INPUTS ---
+                st.session_state["new_vocab"] = ""   # Reset Vocab to blank
+                st.session_state["new_phrase"] = ""  # Reset Phrase to blank
+                
+                # Force the app to reload immediately so you see blank boxes
+                time.sleep(1) # Optional: slight pause so you can see the success message
+                st.rerun()    
+                
+            except Exception as e:
+                st.error(f"Error saving to GitHub: {e}")
+                
+with tab2
     if df.empty: st.info("Add words first!")
     else:
         st.subheader(f"✏️ Edit List ({len(df)} words)")
