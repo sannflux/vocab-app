@@ -570,7 +570,7 @@ tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit", "📇 Generate Anki (Cyber
 
 with tab1:
     st.subheader("Add new word")
-    with st.form("add_form", clear_on_submit=False):
+    with st.form("add_form", clear_on_submit=True):
         v = st.text_input("📝 Vocab", placeholder="e.g. serendipity").lower().strip()
         p_raw = st.text_input("🔤 Phrase (type 1 to skip)", placeholder="I found it by serendipity!").strip()
         
