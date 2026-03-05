@@ -620,7 +620,7 @@ with tab3:
         st.info("Add words first!")
     else:
         # User input for Deck Name
-        deck_name_input = st.text_input("📦 Deck Name", value="My Cyberpunk Vocab")
+        deck_name_input = st.text_input("📦 Deck Name", value="-English Learning::Vocabulary")
         
         c1, c2 = st.columns(2)
         with c1:
