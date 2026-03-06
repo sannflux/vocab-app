@@ -537,15 +537,12 @@ def speak_word(text: str, lang: str = "en-US"):
     js = f"""<script>if('speechSynthesis'in window){{var u=new SpeechSynthesisUtterance("{safe_text}");u.lang="{lang}";u.rate=0.95;window.speechSynthesis.speak(u);}}</script>"""
     st.components.v1.html(js, height=0)
 
-# ========================== SIDEBAR ==========================
+# ========================== SIDEBAR (with word count + last updated) ==========================
 with st.sidebar:
     st.header("🌟 Word of the Day")
-    if not df.empty:
-        today_str = date.today().isoformat()
-        random.seed(today_str)
-        row = df.sample(n=1).iloc[0]
-        st.subheader(row["vocab"].upper())
-        if row["phrase"].strip(): st.caption(row["phrase"])
+    if wotd_vocab:
+        st.subheader(wotd_vocab.upper())
+        if wotd_phrase.strip(): st.caption(wotd_phrase)
     
     st.divider()
     st.metric("📚 Total Words", len(df))
@@ -563,14 +560,13 @@ with st.sidebar:
     lang_options = {"🇬🇧 English (US)": "en-US", "🇮🇩 Indonesian": "id-ID", "🇯🇵 Japanese": "ja-JP"}
     selected_lang_name = st.selectbox("🎙️ Speech Language", list(lang_options.keys()), index=0)
     speech_lang = lang_options[selected_lang_name]
-    if not df.empty:
-        row = df.sample(n=1).iloc[0]
+    if wotd_vocab:
         c1, c2 = st.columns(2)
         with c1: 
-            if st.button("🔊 Vocab", key="wotd_v"): speak_word(row["vocab"], speech_lang)
+            if st.button("🔊 Vocab", key="wotd_v"): speak_word(wotd_vocab, speech_lang)
         with c2: 
-            if row["phrase"].strip() and st.button("🔊 Phrase", key="wotd_p"): speak_word(row["phrase"], speech_lang)
-
+            if wotd_phrase.strip() and st.button("🔊 Phrase", key="wotd_p"): speak_word(wotd_phrase, speech_lang)
+            
 # ========================== TABS ==========================
 tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit", "📇 Generate Anki (Cyberpunk)"])
 
