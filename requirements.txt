@@ -4,4 +4,4 @@ pandas
 google-generativeai
 gTTS
 genanki
-
+pytz
