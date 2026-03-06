@@ -32,7 +32,7 @@ if "gemini_key" not in st.session_state:
     st.session_state.gemini_key = DEFAULT_GEMINI_KEY
 
 USER_NATIVE_LANGUAGE = "Indonesian"
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-2.5-flash-lite"
 
 # ========================== GITHUB ==========================
 try:
