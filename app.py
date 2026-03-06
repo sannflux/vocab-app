@@ -196,11 +196,223 @@ def process_anki_data(df, batch_size=5):
 
 # ========================== GENANKI & AUDIO (unchanged) ==========================
 def create_anki_package(notes_data, deck_name, generate_audio=True):
-    # [CYBERPUNK CSS + HTML TEMPLATES + model + deck creation – exactly the same as before]
-    # (Kept identical for brevity – copy from previous version)
-    cyberpunk_css = """/* ... same as previous ... */"""
-    front_html = """/* ... */"""
-    back_html = """/* ... */"""
+
+        # --- CYBERPUNK CSS ---
+    cyberpunk_css = """
+/* --- Global Settings (Cyberpunk Glitch Theme) --- */
+.card {
+  font-family: 'Roboto Mono', 'Consolas', monospace;
+  font-size: 18px;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #00ff41; 
+  background-color: #111111; 
+  background-image: repeating-linear-gradient(0deg, #181818, #181818 1px, #111111 1px, #111111 20px);
+  padding: 30px 20px;
+  max-width: 800px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  text-align: left;
+}
+
+.nightMode .card {
+  color: #00aaff;
+  background-color: #080808;
+}
+
+/* --- UNIFIED FOCUS CONTAINER --- */
+.vellum-focus-container {
+  background: #0d0d0d;
+  padding: 30px 20px;
+  margin: 0 auto 40px;
+  max-width: 95%;
+  border-radius: 4px; 
+  border: 2px solid #00ff41; 
+  box-shadow: 0 0 5px #00ff41, 0 0 15px rgba(0, 255, 65, 0.4), 0 4px 8px rgba(0, 0, 0, 0.5);
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.nightMode .vellum-focus-container {
+  border: 2px solid #00aaff;
+  box-shadow: 0 0 5px #00aaff, 0 0 15px rgba(0, 170, 255, 0.4), 0 4px 8px rgba(0, 0, 0, 0.6);
+}
+
+.prompt-text {
+  font-family: 'Electrolize', 'Arial Narrow', sans-serif;
+  font-size: clamp(1.5em, 5vw, 2.0em); /* Adjusted size for Phrase + Vocab */
+  font-weight: 900;
+  color: #ffffff;
+  text-shadow: 1px 1px 0 #ff00ff, -1px -1px 0 #00ffff;
+  font-style: normal;
+}
+
+.nightMode .prompt-text {
+  color: #f0f8ff; 
+  text-shadow: 1px 1px 0 #ff00ff, -1px -1px 0 #00ffff;
+}
+
+/* --- SPECIFIC STYLING FOR FRONT (Hidden Cloze) --- */
+.vellum-focus-container.front .cloze {
+  color: #111111;
+  background-color: #00ff41;
+  border-radius: 2px;
+  padding: 2px 4px;
+  line-height: 1;
+  text-decoration: none;
+  font-style: normal;
+}
+
+.nightMode .vellum-focus-container.front .cloze {
+  background-color: #00aaff;
+  color: #0d0d0d;
+}
+
+/* --- SPECIFIC STYLING FOR BACK (Solved Cloze) --- */
+.vellum-focus-container.back .prompt-text {
+  color: #e0e0e0; 
+}
+
+.vellum-focus-container.back .cloze {
+  color: #ff00ff;
+  font-weight: 900;
+  background: none;
+  padding: 0 3px;
+  text-decoration: none;
+  border-bottom: 3px double #00ffff;
+  text-shadow: 0 0 5px #ff00ff;
+  font-style: normal;
+}
+
+.nightMode .vellum-focus-container.back .cloze {
+  color: #00ffff;
+  border-bottom: 3px double #ff00ff;
+  text-shadow: 0 0 5px #00ffff;
+}
+
+/* --- DETAIL SECTIONS --- */
+.vellum-detail-container { padding: 10px 0; }
+.vellum-section {
+  margin: 15px 0;
+  padding: 10px 0;
+  border-bottom: 1px dashed #00ff41; 
+  padding-left: 5px;
+  padding-right: 5px;
+}
+.nightMode .vellum-section { border-bottom: 1px dashed #00aaff; }
+
+.section-header {
+  font-size: 1.1em;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: #00ffff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-left: 3px solid; 
+  padding-left: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.nightMode .section-header { color: #ff00ff; }
+
+.content {
+  font-size: 0.95em;
+  color: #aaffaa; 
+  padding: 0 0 0 13px; 
+}
+.nightMode .content { color: #99ccff; }
+
+/* Markers */
+.vellum-section.definition .section-header { border-left-color: #00ff41; } 
+.vellum-section.pronunciation .section-header { border-left-color: #ff00ff; }
+.vellum-section.examples .section-header { border-left-color: #ffff00; } 
+.vellum-section.synonyms .section-header { border-left-color: #ff00ff; } 
+.vellum-section.antonyms .section-header { border-left-color: #ff4100; } 
+.vellum-section.etymology .section-header { border-left-color: #00ffff; } 
+
+.pronunciation .content {
+  font-family: 'Consolas', monospace;
+  font-size: 1.05em;
+  font-weight: 500;
+  color: #ffff00; 
+}
+.examples .content {
+  color: #77ff77;
+  font-style: italic;
+  font-size: 0.9em;
+}
+
+@media (max-width: 480px) {
+  .card { font-size: 16px; padding: 15px 10px; }
+  .vellum-focus-container { padding: 20px 10px; max-width: 100%; }
+}
+"""
+
+    # --- HTML TEMPLATES ---
+    front_html = """
+<div class="vellum-focus-container front">
+  <div class="prompt-text">
+    {{cloze:Text}}
+  </div>
+</div>
+"""
+
+    back_html = """
+<div class="vellum-focus-container back">
+  <div class="prompt-text solved-text">
+    {{cloze:Text}}
+  </div>
+</div>
+
+<div class="vellum-detail-container">
+  {{#Definition}}
+  <div class="vellum-section definition">
+    <div class="section-header">📜 DEFINITION</div>
+    <div class="content">{{Definition}}</div>
+  </div>
+  {{/Definition}}
+  
+  {{#Pronunciation}}
+  <div class="vellum-section pronunciation">
+    <div class="section-header">🗣️ PRONUNCIATION</div>
+    <div class="content">{{Pronunciation}}</div>
+  </div>
+  {{/Pronunciation}}
+
+  {{#Examples}}
+  <div class="vellum-section examples">
+    <div class="section-header">🖋️ EXAMPLES</div>
+    <div class="content">{{Examples}}</div>
+  </div>
+  {{/Examples}}
+
+  {{#Synonyms}}
+  <div class="vellum-section synonyms">
+    <div class="section-header">➕ SYNONYMS</div>
+    <div class="content">{{Synonyms}}</div>
+  </div>
+  {{/Synonyms}}
+
+  {{#Antonyms}}
+  <div class="vellum-section antonyms">
+    <div class="section-header">➖ ANTONYMS</div>
+    <div class="content">{{Antonyms}}</div>
+  </div>
+  {{/Antonyms}}
+
+  {{#Etymology}}
+  <div class="vellum-section etymology">
+    <div class="section-header">🏛️ ETYMOLOGY</div>
+    <div class="content">{{Etymology}}</div>
+  </div>
+  {{/Etymology}}
+  
+  <div style='display:none'>{{Audio}}</div>
+</div>
+{{Audio}}
+"""
     
     model_id = 1607392325
     my_model = genanki.Model(model_id, 'Cyberpunk Vocab Model', fields=[...], templates=[...], css=cyberpunk_css, model_type=genanki.Model.CLOZE)
