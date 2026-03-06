@@ -8,9 +8,13 @@ import google.generativeai as genai
 import json
 import re
 import time
+import pytz
 import threading
 import os
 import tempfile
+
+# Define Indonesia Western Time (WIB)
+WIB = pytz.timezone('Asia/Jakarta')
 
 # IMPORTS FOR AUDIO & ANKI PACKAGE
 try:
@@ -507,22 +511,71 @@ def create_anki_package(notes_data, deck_name, generate_audio=True):
 
 # ========================== LOAD / SAVE / SPEECH / WOTD ==========================
 def load_data():
-    try:
-        file_content = repo.get_contents("vocabulary.csv")
-        df = pd.read_csv(io.StringIO(file_content.decoded_content.decode('utf-8')))
-        df['phrase'] = df['phrase'].fillna("")
-        return df.sort_values(by="vocab", ignore_index=True)
-    except:
-        return pd.DataFrame(columns=['vocab', 'phrase'])
 
-def save_to_github(dataframe):
-    csv_data = dataframe.to_csv(index=False)
+    if 'vocab_df' in st.session_state:
+        return st.session_state['vocab_df']
+
+    # If not in session state, fetch from GitHub
     try:
-        file = repo.get_contents("vocabulary.csv")
-        repo.update_file(file.path, "Updated vocab", csv_data, file.sha)
-    except GithubException as e:
-        if e.status == 404:
-            repo.create_file("vocabulary.csv", "Initial commit", csv_data)
+        g = Github(st.secrets["github"]["token"])
+        repo = g.get_repo(st.secrets["github"]["repo_name"])
+        contents = repo.get_contents("vocabulary.csv")
+        csv_data = contents.decoded_content.decode("utf-8")
+        df = pd.read_csv(io.StringIO(csv_data))
+        
+        # Save to session state so we don't have to download again immediately
+        st.session_state['vocab_df'] = df
+        return df
+    except Exception:
+        # Return empty DataFrame if file doesn't exist yet
+        return pd.DataFrame(columns=["Word", "Context", "Translation", "Date Added"])
+
+def save_to_github(df):
+    """
+    Saves data to GitHub.
+    IMPROVEMENT: Uses WIB time and updates local state instantly.
+    """
+    # 1. Update local session state immediately (Optimistic Update)
+    # This ensures the user sees the data as "saved" instantly on the screen
+    st.session_state['vocab_df'] = df
+    
+    # 2. Get Current Time in WIB
+    now_wib = datetime.now(WIB).strftime("%Y-%m-%d %H:%M:%S")
+    
+    # 3. Prepare CSV Data
+    csv_buffer = io.StringIO()
+    df.to_csv(csv_buffer, index=False)
+    content = csv_buffer.getvalue()
+    
+    try:
+        g = Github(st.secrets["github"]["token"])
+        repo = g.get_repo(st.secrets["github"]["repo_name"])
+        
+        try:
+            # Try to update existing file
+            contents = repo.get_contents("vocabulary.csv")
+            repo.update_file(
+                contents.path, 
+                f"Update vocab: {now_wib} (WIB)", 
+                content, 
+                contents.sha
+            )
+        except GithubException as e:
+            if e.status == 404:
+                # Create file if it doesn't exist
+                repo.create_file(
+                    "vocabulary.csv", 
+                    f"Init vocab: {now_wib} (WIB)", 
+                    content
+                )
+            else:
+                raise e
+        
+        # 4. Show success toast (Small popup, doesn't reload page layout)
+        st.toast(f"✅ Saved to Cloud at {now_wib} WIB!", icon="☁️")
+        
+    except Exception as e:
+        st.error(f"Error saving to GitHub: {e}")
     return True
 
 df = load_data()
