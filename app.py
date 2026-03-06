@@ -573,35 +573,7 @@ with st.sidebar:
 # ========================== TABS ==========================
 tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit", "📇 Generate Anki (Cyberpunk)"])
 
-with tab1:
-    st.subheader("Add new word")
-    with st.form("add_form", clear_on_submit=True):
-        v = st.text_input("📝 Vocab", placeholder="e.g. serendipity").lower().strip()
-        p_raw = st.text_input("🔤 Phrase (type 1 to skip)", placeholder="I found it by serendipity!").strip()
-        
-        exists = False
-        if v and not df.empty and v in df['vocab'].values:
-            exists = True
-            st.warning(f"⚠️ '{v}' already exists.")
-            
-        col1, col2 = st.columns([1,1])
-        with col1:
-            label = "🔄 Update Phrase" if exists else "💾 Save to Cloud"
-            submitted = st.form_submit_button(label, use_container_width=True)
 
-    if submitted:
-        if v:
-            p = "" if p_raw.upper() == "1" else p_raw.capitalize()
-            if exists:
-                df.loc[df['vocab'] == v, 'phrase'] = p
-                if save_to_github(df): 
-                    st.success(f"✅ Phrase for '{v}' updated!")
-                    time.sleep(1); st.rerun()
-            else:
-                updated = pd.concat([df, pd.DataFrame([{"vocab": v, "phrase": p}])], ignore_index=True)
-                if save_to_github(updated): 
-                    st.success(f"✅ '{v}' added!")
-                    time.sleep(1); st.rerun()
 
 with tab2:
     if df.empty: st.info("Add words first!")
@@ -636,7 +608,44 @@ with tab3:
         if st.button("🚀 Generate Deck", type="primary", use_container_width=True):
             raw_notes = process_anki_data(df, batch_size=batch_size)
             
-            with st.spinner("📦 Packaging Deck & Audio..."):
+            with st.spinnwith tab1:
+    st.subheader("Add new word")
+    
+    # 1. Create the form just for input collection
+    with st.form("add_form", clear_on_submit=True):
+        # We don't check logic here, just collect input
+        v_input = st.text_input("📝 Vocab", placeholder="e.g. serendipity")
+        p_raw = st.text_input("🔤 Phrase (type 1 to skip)", placeholder="I found it by serendipity!")
+        
+        # The button always says "Save/Update" because we don't know the logic yet
+        submitted = st.form_submit_button("💾 Save / Update", use_container_width=True)
+
+    # 2. Process logic ONLY after submission
+    if submitted:
+        # Clean inputs now
+        v = v_input.lower().strip()
+        p = "" if p_raw.strip().upper() == "1" else p_raw.strip().capitalize()
+
+        if v:
+            # Check existence HERE, after submission
+            if not df.empty and v in df['vocab'].values:
+                # UPDATE LOGIC
+                df.loc[df['vocab'] == v, 'phrase'] = p
+                if save_to_github(df): 
+                    st.success(f"⚠️ '{v}' already existed. Phrase updated successfully!")
+                    time.sleep(1)
+                    st.rerun()
+            else:
+                # ADD NEW LOGIC
+                new_entry = pd.DataFrame([{"vocab": v, "phrase": p}])
+                updated = pd.concat([df, new_entry], ignore_index=True)
+                if save_to_github(updated): 
+                    st.success(f"✅ '{v}' added successfully!")
+                    time.sleep(1)
+                    st.rerun()
+        else:
+            st.error("Please enter a word.")
+er("📦 Packaging Deck & Audio..."):
                 apkg_buffer = create_anki_package(raw_notes, deck_name_input, generate_audio=include_audio)
                 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
