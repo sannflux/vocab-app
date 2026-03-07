@@ -566,35 +566,36 @@ tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit", "📇 Generate Anki (Cyber
 
 with tab1:
     st.subheader("Add new word")
+    
     with st.form("add_form", clear_on_submit=True):
-        v = st.text_input("📝 Vocab", placeholder="e.g. serendipity").lower().strip()
-        p_raw = st.text_input("🔤 Phrase (type 1 to skip)", placeholder="I found it by serendipity!").strip()
+        v = st.text_input("Vocab", placeholder="e.g. serendipity").lower().strip()
+        p_raw = st.text_input("Phrase (type 1 to skip)", placeholder="I found it by serendipity!").strip()
         
-        exists = False
-        if v and not df.empty and v in df['vocab'].values:
-            exists = True
-            st.warning(f"⚠️ '{v}' already exists.")
-            
-        col1, col2 = st.columns([1,1])
-        with col1:
-            label = "🔄 Update Phrase" if exists else "💾 Save to Cloud"
-            submitted = st.form_submit_button(label, use_container_width=True)
+        submitted = st.form_submit_button("💾 Save to Cloud", use_container_width=True, type="primary")
 
-    if submitted:
-        if v:
-            p = "" if p_raw.upper() == "1" else p_raw.capitalize()
-            if exists:
-                df.loc[df['vocab'] == v, 'phrase'] = p
-                if save_to_github(df): 
-                    st.success(f"✅ Phrase for '{v}' updated!")
-                    time.sleep(1)
-                    st.rerun()
-            else:
-                updated = pd.concat([df, pd.DataFrame([{"vocab": v, "phrase": p}])], ignore_index=True)
-                if save_to_github(updated): 
-                    st.success(f"✅ '{v}' added!")
-                    time.sleep(1)
-                    st.rerun()
+    if submitted and v:
+        # Always load the absolute latest version from GitHub
+        current_df = load_data().copy()
+        
+        p = "" if p_raw.upper() == "1" else p_raw.capitalize()
+        
+        if v in current_df['vocab'].values:
+            # === UPDATE ===
+            current_df.loc[current_df['vocab'] == v, 'phrase'] = p
+            if save_to_github(current_df):
+                st.success(f"✅ Phrase for **'{v}'** has been updated!")
+                time.sleep(1.2)
+                st.rerun()
+        else:
+            # === ADD NEW ===
+            new_row = pd.DataFrame([{"vocab": v, "phrase": p}])
+            updated_df = pd.concat([current_df, new_row], ignore_index=True)
+            if save_to_github(updated_df):
+                st.success(f"✅ **'{v}'** has been added successfully!")
+                time.sleep(1.2)
+                st.rerun()
+    elif submitted:
+        st.error("Please enter a vocabulary word.")
 
 with tab2:
     if df.empty: 
