@@ -3,7 +3,7 @@ import pandas as pd
 from github import Github, GithubException
 import io
 import random
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import google.generativeai as genai
 import json
 import re
@@ -37,29 +37,6 @@ except KeyError as e:
 if "gemini_key" not in st.session_state:
     st.session_state.gemini_key = DEFAULT_GEMINI_KEY
 
-# ========================== SIDEBAR & CONFIG ==========================
-with st.sidebar:
-    st.header("⚙️ Settings")
-    
-    # 1. Target Language
-    TARGET_LANG = st.selectbox(
-        "🎯 Definition Language", 
-        ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"],
-        index=0
-    )
-    
-    # 2. Model Selection
-    GEMINI_MODEL = st.selectbox("🤖 AI Model", ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"], index=0)
-    
-    st.divider()
-    
-    st.header("🔑 Gemini API Key")
-    alt_key = st.text_input("Alternative key", type="password", value="", placeholder="AIzaSy...")
-    if alt_key and alt_key != st.session_state.gemini_key:
-        st.session_state.gemini_key = alt_key
-        st.success("✅ Switched!")
-        st.rerun()
-
 # ========================== GITHUB CONNECT ==========================
 try:
     g = Github(token)
@@ -81,242 +58,6 @@ def get_gemini_model(api_key: str, model_name: str):
         st.error(f"❌ Gemini key error: {e}")
         return None
 
-# ========================== CLEANING FUNCTIONS ==========================
-def cap_first(s: str) -> str:
-    s = str(s).strip()
-    return s[0].upper() + s[1:] if s else s
-
-def ensure_trailing_dot(s: str) -> str:
-    s = str(s).strip()
-    return s if s and s[-1] in ".!?" else (s + "." if s else "")
-
-def normalize_spaces(text: str) -> str:
-    return re.sub(r"\s+", " ", str(text)).strip() if text else ""
-
-def clean_grammar(text: str) -> str:
-    if not isinstance(text, str): return text
-    rules = [
-        (r"\bto doing\b", "to do"), (r"\bfor helps\b", "to help"),
-        (r"\bis use to\b", "is used to"), (r"\bhelp for to\b", "help to"),
-        (r"\bfor to\b", "to"), (r"\bcan able to\b", "can")
-    ]
-    for pat, repl in rules:
-        text = re.sub(pat, repl, text, flags=re.IGNORECASE)
-    return text
-
-def cap_each_sentence(text: str) -> str:
-    if not isinstance(text, str): return text
-    sentences = re.split(r'(?<=[.!?])\s+', text)
-    return " ".join([cap_first(s) for s in sentences if s.strip()])
-
-def highlight_vocab(text: str, vocab: str) -> str:
-    if not text or not vocab: return text
-    pattern = r'\b' + re.escape(vocab) + r'\b'
-    return re.sub(pattern, f'<b><u>{vocab}</u></b>', text, flags=re.IGNORECASE)
-
-def fix_vocab_casing(phrase: str, vocab: str) -> str:
-    if not phrase or not vocab: return phrase
-    pattern = r'\b' + re.escape(vocab.lower()) + r'\b'
-    return re.sub(pattern, vocab, phrase, flags=re.IGNORECASE)
-
-# ========================== SPEECH (Browser) ==========================
-def speak_word(text: str, lang: str = "en-US"):
-    if not text: return
-    safe_text = text.replace('"', '\\"').replace("'", "\\'")
-    js = f"""<script>if('speechSynthesis'in window){{var u=new SpeechSynthesisUtterance("{safe_text}");u.lang="{lang}";u.rate=0.95;window.speechSynthesis.speak(u);}}</script>"""
-    st.components.v1.html(js, height=0)
-
-# ========================== BATCH GENERATOR ==========================
-def robust_json_parse(text: str):
-    try:
-        return json.loads(text)
-    except:
-        pass
-    match = re.search(r'\[.*\]', text, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group(0))
-        except:
-            pass
-    return None
-
-def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
-    model = get_gemini_model(st.session_state.gemini_key, GEMINI_MODEL)
-    if not model:
-        return []
-
-    all_card_data = []
-    progress_bar = st.progress(0)
-    total_items = len(vocab_phrase_list)
-
-    for i in range(0, total_items, batch_size):
-        progress_bar.progress(i / total_items, text=f"🤖 AI Processing {i}/{total_items} words...")
-        batch = vocab_phrase_list[i:i + batch_size]
-        # batch is list of tuples: (vocab, phrase)
-        batch_dicts = [{"vocab": v[0], "phrase": v[1]} for v in batch]
-
-        prompt = f"""You are an expert lexicographer. Output ONLY a JSON array.
-RULES: 
-1. Copy ALL fields exactly. 
-2. IF 'phrase' starts with '*': Treat it as a CONTEXT HINT (e.g. phrase='*bird' for vocab='crane'). Use this hint to pick the specific definition, but generate a NEW sentence for the final 'phrase' field.
-3. IF 'phrase' is normal text: Define based on that usage.
-4. IF 'phrase' is empty: Generate ONE simple sentence (max 12 words) using the most common definition.
-5. EXACT vocab unchanged.
-NEVER use markdown, asterisks, bold, italic, or any formatting. Plain text only.
-OUTPUT FORMAT: [{{"vocab": "...", "phrase": "...", "translation": "{TARGET_LANG} meaning", "part_of_speech": "...", "pronunciation_ipa": "/.../", "definition_english": "...", "example_sentences": ["..."], "synonyms_antonyms": {{"synonyms": [], "antonyms": []}}, "etymology": "Plain text only."}}]
-BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
-
-        for attempt in range(5):
-            try:
-                response = model.generate_content(prompt)
-                parsed = robust_json_parse(response.text)
-                if isinstance(parsed, list):
-                    all_card_data.extend(parsed)
-                    break
-            except Exception as e:
-                wait_time = (2 ** attempt) + 1
-                print(f"⚠️ API Error (Attempt {attempt+1}): {e}. Retrying in {wait_time}s...")
-                time.sleep(wait_time)
-        else:
-             st.error(f"❌ Batch failed after 5 attempts. Skipping batch starting with: {batch[0][0]}")
-
-    progress_bar.progress(1.0, text="✅ AI Generation Complete!")
-    time.sleep(0.5)
-    progress_bar.empty()
-    return all_card_data
-
-def process_anki_data(df_subset, batch_size=6):
-    df_subset = df_subset[df_subset['vocab'].astype(str).str.strip().str.len() > 0].copy()
-    vocab_phrase_list = df_subset[['vocab', 'phrase']].values.tolist()
-    all_card_data = generate_anki_card_data_batched(vocab_phrase_list, batch_size=batch_size)
-    processed_notes = []
-
-    for card_data in all_card_data:
-        vocab_raw = str(card_data.get("vocab", "")).strip().lower()
-        vocab_cap = cap_first(vocab_raw)
-
-        phrase = normalize_spaces(card_data.get("phrase", ""))
-        phrase = clean_grammar(phrase)
-        phrase = cap_each_sentence(phrase)
-        phrase = ensure_trailing_dot(phrase)
-        phrase = fix_vocab_casing(phrase, vocab_raw)
-
-        formatted_phrase = highlight_vocab(phrase, vocab_raw) if phrase else ""
-
-        translation = ensure_trailing_dot(clean_grammar(normalize_spaces(card_data.get("translation", "?"))))
-
-        pos = str(card_data.get("part_of_speech", "")).title()
-        ipa = card_data.get("pronunciation_ipa", "")
-        eng_def = ensure_trailing_dot(cap_each_sentence(clean_grammar(normalize_spaces(card_data.get("definition_english", "")))))
-        examples = [ensure_trailing_dot(cap_each_sentence(clean_grammar(normalize_spaces(e)))) for e in (card_data.get("example_sentences", []) or [])[:3]]
-        examples_field = "<ul>" + "".join(f"<li><i>{e}</i></li>" for e in examples) + "</ul>" if examples else ""
-        syn_ant = card_data.get("synonyms_antonyms", {}) or {}
-        synonyms_field = ensure_trailing_dot(", ".join([cap_first(s) for s in (syn_ant.get("synonyms", []) or [])[:5]]))
-        antonyms_field = ensure_trailing_dot(", ".join([cap_first(a) for a in (syn_ant.get("antonyms", []) or [])[:5]]))
-        etymology = normalize_spaces(card_data.get("etymology", ""))
-
-        text_field = f"{formatted_phrase}<br><br>{vocab_cap}: <b>{{{{c1::{translation}}}}}</b>" if formatted_phrase else f"{vocab_cap}: <b>{{{{c1::{translation}}}}}</b>"
-
-        pronunciation_field = f"<b>[{pos}]</b> {ipa}" if ipa else f"<b>[{pos}]</b>"
-
-        processed_notes.append({
-            "VocabRaw": vocab_raw,
-            "Text": text_field, 
-            "Pronunciation": pronunciation_field, 
-            "Definition": eng_def,
-            "Examples": examples_field, 
-            "Synonyms": synonyms_field, 
-            "Antonyms": antonyms_field, 
-            "Etymology": etymology
-        })
-    return processed_notes
-
-# ========================== AUDIO HELPER ==========================
-def generate_audio_file(vocab, temp_dir):
-    try:
-        clean_filename = re.sub(r'[^a-zA-Z0-9]', '', vocab) + ".mp3"
-        file_path = os.path.join(temp_dir, clean_filename)
-        if vocab.strip():
-            tts = gTTS(text=vocab, lang='en', slow=False)
-            tts.save(file_path)
-            return vocab, clean_filename, file_path
-    except Exception as e:
-        print(f"Audio error for {vocab}: {e}")
-    return vocab, None, None
-
-# ========================== CSS / PREVIEW ==========================
-CYBERPUNK_CSS = """
-/* --- Global Settings (Cyberpunk Glitch Theme) --- */
-.card { font-family: 'Roboto Mono', 'Consolas', monospace; font-size: 18px; line-height: 1.5; color: #00ff41; background-color: #111111; background-image: repeating-linear-gradient(0deg, #181818, #181818 1px, #111111 1px, #111111 20px); padding: 30px 20px; text-align: left; }
-.vellum-focus-container { background: #0d0d0d; padding: 30px 20px; margin: 0 auto 40px; border: 2px solid #00ff41; box-shadow: 0 0 5px #00ff41, 0 0 15px rgba(0, 255, 65, 0.4); text-align: center; }
-.prompt-text { font-family: 'Electrolize', sans-serif; font-size: 1.8em; font-weight: 900; color: #ffffff; text-shadow: 1px 1px 0 #ff00ff, -1px -1px 0 #00ffff; }
-.cloze { color: #111111; background-color: #00ff41; padding: 2px 4px; }
-.solved-text .cloze { color: #ff00ff; background: none; border-bottom: 3px double #00ffff; text-shadow: 0 0 5px #ff00ff; }
-.vellum-section { margin: 15px 0; padding: 10px 0; border-bottom: 1px dashed #00ff41; }
-.section-header { font-weight: 600; color: #00ffff; border-left: 3px solid #00ff41; padding-left: 10px; }
-.content { color: #aaffaa; padding-left: 13px; }
-"""
-
-# ========================== GENANKI LOGIC ==========================
-def create_anki_package(notes_data, deck_name, generate_audio=True):
-    front_html = """<div class="vellum-focus-container front"><div class="prompt-text">{{cloze:Text}}</div></div>"""
-    back_html = """<div class="vellum-focus-container back"><div class="prompt-text solved-text">{{cloze:Text}}</div></div>
-<div class="vellum-detail-container">
-  {{#Definition}}<div class="vellum-section"><div class="section-header">📜 DEFINITION</div><div class="content">{{Definition}}</div></div>{{/Definition}}
-  {{#Pronunciation}}<div class="vellum-section"><div class="section-header">🗣️ PRONUNCIATION</div><div class="content">{{Pronunciation}}</div></div>{{/Pronunciation}}
-  {{#Examples}}<div class="vellum-section"><div class="section-header">🖋️ EXAMPLES</div><div class="content">{{Examples}}</div></div>{{/Examples}}
-  {{#Synonyms}}<div class="vellum-section"><div class="section-header">➕ SYNONYMS</div><div class="content">{{Synonyms}}</div></div>{{/Synonyms}}
-  {{#Etymology}}<div class="vellum-section"><div class="section-header">🏛️ ETYMOLOGY</div><div class="content">{{Etymology}}</div></div>{{/Etymology}}
-  <div style='display:none'>{{Audio}}</div>
-</div>{{Audio}}"""
-
-    my_model = genanki.Model(
-        1607392319, 'Cyberpunk Vocab Model',
-        fields=[{'name': 'Text'}, {'name': 'Pronunciation'}, {'name': 'Definition'}, {'name': 'Examples'}, {'name': 'Synonyms'}, {'name': 'Antonyms'}, {'name': 'Etymology'}, {'name': 'Audio'}],
-        templates=[{'name': 'Card 1', 'qfmt': front_html, 'afmt': back_html}],
-        css=CYBERPUNK_CSS,
-        model_type=genanki.Model.CLOZE 
-    )
-    my_deck = genanki.Deck(2059400110, deck_name)
-    media_files = []
-    
-    with tempfile.TemporaryDirectory() as temp_dir:
-        audio_map = {}
-        if generate_audio:
-            progress_bar = st.progress(0)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-                unique_vocabs = {n['VocabRaw'] for n in notes_data if n['VocabRaw']}
-                future_to_vocab = {executor.submit(generate_audio_file, v, temp_dir): v for v in unique_vocabs}
-                for i, future in enumerate(concurrent.futures.as_completed(future_to_vocab)):
-                    vocab_key, fname, fpath = future.result()
-                    if fname and fpath:
-                        media_files.append(fpath)
-                        audio_map[vocab_key] = f"[sound:{fname}]"
-                    progress_bar.progress((i + 1) / len(unique_vocabs), text=f"🔊 Generating Audio: {vocab_key}...")
-            progress_bar.empty()
-
-        for note_data in notes_data:
-            audio_tag = audio_map.get(note_data['VocabRaw'], "")
-            my_note = genanki.Note(
-                model=my_model,
-                fields=[
-                    note_data['Text'], note_data['Pronunciation'], note_data['Definition'],
-                    note_data['Examples'], note_data['Synonyms'], note_data['Antonyms'],
-                    note_data['Etymology'], audio_tag
-                ]
-            )
-            my_deck.add_note(my_note)
-        
-        my_package = genanki.Package(my_deck)
-        my_package.media_files = media_files
-        buffer = io.BytesIO()
-        output_path = os.path.join(temp_dir, 'output.apkg')
-        my_package.write_to_file(output_path)
-        with open(output_path, "rb") as f:
-            buffer.write(f.read())
-        buffer.seek(0)
-        return buffer
-
 # ========================== LOAD / SAVE ==========================
 @st.cache_data(ttl=600)
 def load_data():
@@ -324,17 +65,24 @@ def load_data():
         file_content = repo.get_contents("vocabulary.csv")
         df = pd.read_csv(io.StringIO(file_content.decoded_content.decode('utf-8')))
         df['phrase'] = df['phrase'].fillna("")
+        
+        # MIGRATION: Ensure columns exist
         if 'status' not in df.columns: df['status'] = 'New'
+        if 'date_added' not in df.columns: df['date_added'] = datetime.now().strftime("%Y-%m-%d")
+            
         return df.sort_values(by="vocab", ignore_index=True)
     except GithubException as e:
-        if e.status == 404: return pd.DataFrame(columns=['vocab', 'phrase', 'status'])
+        if e.status == 404: 
+            return pd.DataFrame(columns=['vocab', 'phrase', 'status', 'date_added'])
         else: st.error(f"❌ CRITICAL: GitHub Error {e.status}"); st.stop()
     except Exception as e:
         st.error(f"❌ CRITICAL: CSV Error. {e}"); st.stop()
 
 def save_to_github(dataframe):
+    # Cleaning
     dataframe = dataframe[dataframe['vocab'].astype(str).str.strip().str.len() > 0]
     dataframe = dataframe.drop_duplicates(subset=['vocab'], keep='last')
+    
     csv_data = dataframe.to_csv(index=False)
     try:
         file = repo.get_contents("vocabulary.csv")
@@ -346,138 +94,227 @@ def save_to_github(dataframe):
 
 df = load_data().copy()
 
-# ========================== WORD OF THE DAY & DOWNLOAD ==========================
+# ========================== SIDEBAR & CONFIG ==========================
 with st.sidebar:
-    st.divider()
-    # NEW: Database Backup Button
-    if not df.empty:
-        csv_full = df.to_csv(index=False).encode('utf-8')
-        st.download_button("💾 Backup Database (CSV)", csv_full, f"vocab_backup_{date.today()}.csv", "text/csv")
+    st.header("⚙️ Settings")
+    TARGET_LANG = st.selectbox("🎯 Definition Language", ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"], index=0)
+    GEMINI_MODEL = st.selectbox("🤖 AI Model", ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"], index=0)
     
     st.divider()
+    
+    # NEW: Progress Bar
+    if not df.empty:
+        total = len(df)
+        done = len(df[df['status'] == 'Done'])
+        percent = done / total if total > 0 else 0
+        st.progress(percent, text=f"Progress: {done}/{total} Done")
+    
+    st.divider()
+    
+    # Word of the Day
     st.header("🌟 Word of the Day")
     if not df.empty:
         today_str = date.today().isoformat()
         random.seed(today_str)
         try:
             row = df.sample(n=1).iloc[0]
-            wotd_vocab = row["vocab"]
-            wotd_phrase = row["phrase"]
-            st.subheader(wotd_vocab.upper())
-            if wotd_phrase: st.caption(wotd_phrase)
-            if st.button("🔊 Pronounce"): speak_word(wotd_vocab)
+            st.subheader(row["vocab"].upper())
+            if row["phrase"]: st.caption(row["phrase"])
+            
+            # Simple JS Speech
+            safe_text = row["vocab"].replace("'", "\\'")
+            if st.button("🔊 Pronounce"):
+                st.components.v1.html(f"<script>speechSynthesis.speak(new SpeechSynthesisUtterance('{safe_text}'));</script>", height=0)
         except: pass
     else: st.info("No words yet!")
+    
+    st.divider()
+    # Backup
+    if not df.empty:
+        csv_full = df.to_csv(index=False).encode('utf-8')
+        st.download_button("💾 Backup CSV", csv_full, f"vocab_{date.today()}.csv", "text/csv")
+
+# ========================== HELPERS ==========================
+def cap_first(s): return str(s).strip()[0].upper() + str(s).strip()[1:] if s else ""
+def ensure_dot(s): s = str(s).strip(); return s + "." if s and s[-1] not in ".!?" else s
+def clean_txt(t): return re.sub(r"\s+", " ", str(t)).strip() if t else ""
+
+# ========================== AI & ANKI LOGIC ==========================
+def generate_anki_batch(vocab_list):
+    model = get_gemini_model(st.session_state.gemini_key, GEMINI_MODEL)
+    if not model: return []
+    
+    batch_dicts = [{"vocab": v[0], "phrase": v[1]} for v in vocab_list]
+    prompt = f"""Output ONLY a JSON array. 
+    1. Define 'vocab' strictly based on 'phrase'. 
+    2. If 'phrase' starts with '*', use it as a context hint. 
+    3. If 'phrase' is empty, generate a simple sentence.
+    OUTPUT: [{{"vocab": "...", "phrase": "...", "translation": "{TARGET_LANG} meaning", "part_of_speech": "...", "pronunciation_ipa": "/.../", "definition_english": "...", "example_sentences": ["..."], "synonyms_antonyms": {{"synonyms": [], "antonyms": []}}, "etymology": "Plain text."}}]
+    INPUT: {json.dumps(batch_dicts)}"""
+    
+    try:
+        resp = model.generate_content(prompt)
+        # Robust parsing
+        clean_resp = re.search(r'\[.*\]', resp.text, re.DOTALL)
+        return json.loads(clean_resp.group(0)) if clean_resp else []
+    except Exception as e:
+        print(f"AI Error: {e}")
+        return []
+
+def process_data(subset, batch_size=5):
+    all_data = []
+    subset = subset[subset['vocab'].str.len() > 0]
+    items = subset[['vocab', 'phrase']].values.tolist()
+    
+    bar = st.progress(0)
+    for i in range(0, len(items), batch_size):
+        bar.progress(i/len(items), f"🤖 AI Processing {i}/{len(items)}...")
+        batch = items[i:i+batch_size]
+        res = generate_anki_batch(batch)
+        all_data.extend(res)
+        time.sleep(0.5)
+    bar.empty()
+    
+    notes = []
+    for d in all_data:
+        v = str(d.get('vocab', '')).strip().lower()
+        if not v: continue
+        
+        ph = clean_txt(d.get('phrase', ''))
+        ph_fmt = re.sub(r'\b'+re.escape(v)+r'\b', f'<b><u>{v}</u></b>', ph, flags=re.I)
+        tr = ensure_dot(clean_txt(d.get('translation', '')))
+        
+        text_field = f"{ph_fmt}<br><br>{cap_first(v)}: <b>{{{{c1::{tr}}}}}</b>"
+        
+        notes.append({
+            'VocabRaw': v,
+            'Text': text_field,
+            'Pronunciation': f"<b>[{d.get('part_of_speech','').title()}]</b> {d.get('pronunciation_ipa','')}",
+            'Definition': ensure_dot(clean_txt(d.get('definition_english',''))),
+            'Examples': "<ul>" + "".join(f"<li>{e}</li>" for e in d.get('example_sentences',[])[:3]) + "</ul>",
+            'Synonyms': ", ".join(d.get('synonyms_antonyms',{}).get('synonyms',[])[:5]),
+            'Antonyms': ", ".join(d.get('synonyms_antonyms',{}).get('antonyms',[])[:5]),
+            'Etymology': clean_txt(d.get('etymology',''))
+        })
+    return notes
+
+def make_package(notes, name, audio=True):
+    # CSS
+    css = ".card{font-family:'Roboto Mono',monospace;background:#111;color:#0f0;padding:20px}.cloze{color:#111;background:#0f0}.nightMode .cloze{color:#000;background:#0af}"
+    
+    m = genanki.Model(12345, 'Cyberpunk', 
+        fields=[{'name':x} for x in ['Text','Pronunciation','Definition','Examples','Synonyms','Antonyms','Etymology','Audio']],
+        templates=[{'name':'C1', 'qfmt':'{{cloze:Text}}', 'afmt':'{{cloze:Text}}<br><br>{{Definition}}<br>{{Audio}}'}],
+        css=css, model_type=genanki.Model.CLOZE)
+    
+    d = genanki.Deck(54321, name)
+    files = []
+    
+    with tempfile.TemporaryDirectory() as tmp:
+        amap = {}
+        if audio:
+            with concurrent.futures.ThreadPoolExecutor(5) as exe:
+                futs = {exe.submit(gen_audio, n['VocabRaw'], tmp): n for n in notes}
+                for f in concurrent.futures.as_completed(futs):
+                    k, p = f.result()
+                    if p: files.append(p); amap[k] = f"[sound:{os.path.basename(p)}]"
+
+        for n in notes:
+            d.add_note(genanki.Note(model=m, fields=[n['Text'], n['Pronunciation'], n['Definition'], n['Examples'], n['Synonyms'], n['Antonyms'], n['Etymology'], amap.get(n['VocabRaw'],'')]))
+        
+        pkg = genanki.Package(d); pkg.media_files = files
+        out = io.BytesIO()
+        pkg.write_to_file(os.path.join(tmp, 'deck.apkg'))
+        with open(os.path.join(tmp, 'deck.apkg'), 'rb') as f: out.write(f.read())
+        out.seek(0)
+        return out
+
+def gen_audio(txt, folder):
+    try:
+        fn = re.sub(r'\W', '', txt) + ".mp3"
+        fp = os.path.join(folder, fn)
+        gTTS(txt).save(fp)
+        return txt, fp
+    except: return txt, None
 
 # ========================== TABS ==========================
-tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit / Review", "📇 Generate Anki"])
+tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit", "📇 Generate"])
 
 with tab1:
-    st.subheader("Add new word")
+    st.subheader("Add Words")
+    mode = st.radio("Input Mode", ["Single", "Bulk"], horizontal=True)
     
-    # NEW: Mode Selection for Add
-    add_mode = st.radio("Mode", ["Single", "Bulk"], horizontal=True, label_visibility="collapsed")
-    
-    if add_mode == "Single":
-        with st.form("add_form", clear_on_submit=True):
-            v = st.text_input("📝 Vocab", placeholder="e.g. serendipity").lower().strip()
-            p_raw = st.text_input("🔤 Phrase", placeholder="I found it by serendipity! (or type '1' to skip)").strip()
-            submitted = st.form_submit_button("💾 Save to Cloud", use_container_width=True)
-
-        if submitted and v:
-            p = "" if p_raw == "1" else p_raw if p_raw.startswith("*") else p_raw.capitalize()
-            if not df.empty and v in df['vocab'].values:
-                df.loc[df['vocab'] == v, 'phrase'] = p; df.loc[df['vocab'] == v, 'status'] = 'New'
-            else:
-                df = pd.concat([df, pd.DataFrame([{"vocab": v, "phrase": p, "status": "New"}])], ignore_index=True)
-            if save_to_github(df): st.success(f"✅ Saved '{v}'!"); time.sleep(1); st.rerun()
-
-    else: # NEW: Bulk Add Logic
-        st.info("Paste words separated by newlines. Optional: add comma for phrase. Example:\n`cat, The cat sat.`\n`dog`")
-        bulk_text = st.text_area("Paste List", height=150)
-        if st.button("💾 Process Bulk List", type="primary"):
-            lines = [l.strip() for l in bulk_text.split('\n') if l.strip()]
-            new_rows = []
-            for line in lines:
-                parts = line.split(',', 1)
-                bv = parts[0].strip().lower()
-                bp = parts[1].strip() if len(parts) > 1 else ""
-                if bv: new_rows.append({"vocab": bv, "phrase": bp, "status": "New"})
-            
-            if new_rows:
-                # Merge logic to avoid duplicates
-                new_df = pd.DataFrame(new_rows)
-                df = pd.concat([df, new_df]).drop_duplicates(subset=['vocab'], keep='last')
-                if save_to_github(df): st.success(f"✅ Added {len(new_rows)} words!"); time.sleep(1); st.rerun()
+    if mode == "Single":
+        with st.form("add"):
+            v = st.text_input("Vocab").lower().strip()
+            p = st.text_input("Phrase (Optional)").strip()
+            if st.form_submit_button("Save"):
+                if v:
+                    new = {"vocab": v, "phrase": p, "status": "New", "date_added": datetime.now().strftime("%Y-%m-%d")}
+                    df = pd.concat([df, pd.DataFrame([new])], ignore_index=True)
+                    if save_to_github(df): st.success("Saved!"); time.sleep(0.5); st.rerun()
+    else:
+        txt = st.text_area("Bulk (vocab, phrase)", height=150, help="One per line. Comma optional.")
+        if st.button("Process Bulk"):
+            rows = []
+            for l in txt.split('\n'):
+                if ',' in l: v, p = l.split(',', 1)
+                else: v, p = l, ""
+                if v.strip(): rows.append({"vocab": v.strip().lower(), "phrase": p.strip(), "status": "New", "date_added": datetime.now().strftime("%Y-%m-%d")})
+            if rows:
+                df = pd.concat([df, pd.DataFrame(rows)]).drop_duplicates(subset=['vocab'], keep='last')
+                if save_to_github(df): st.success(f"Added {len(rows)} words!"); time.sleep(0.5); st.rerun()
 
 with tab2:
-    if df.empty: st.info("Add words first!")
-    else:
-        st.subheader(f"✏️ Edit List ({len(df)} words)")
-        c1, c2 = st.columns([2, 1])
-        with c1: search = st.text_input("🔎 Search...", "").lower().strip()
-        with c2: filter_new = st.checkbox("Show 'New' only")
-        
-        display_df = df.copy()
-        if search: display_df = display_df[display_df['vocab'].str.contains(search, case=False)]
-        if filter_new: display_df = display_df[display_df['status'] == 'New']
-        
-        edited = st.data_editor(display_df, num_rows="dynamic", use_container_width=True, hide_index=True, column_config={"status": st.column_config.SelectboxColumn("Status", options=["New", "Done"], required=True)})
-        
-        if st.button("💾 Save Changes", type="primary", use_container_width=True):
-            if search or filter_new:
-                for index, row in edited.iterrows():
-                    mask = df['vocab'] == row['vocab']
-                    df.loc[mask, ['phrase', 'status']] = [row['phrase'], row['status']]
-                final_save = df
-            else: final_save = edited
-            if save_to_github(final_save.sort_values(by="vocab", ignore_index=True)): st.toast("✅ Cloud updated!", icon="🎉"); st.rerun()
+    st.subheader("Database")
+    s = st.text_input("Search")
+    show = df[df['vocab'].str.contains(s, case=False)] if s else df
+    
+    # Editable Grid
+    edited = st.data_editor(show, num_rows="dynamic", use_container_width=True, 
+                            column_config={
+                                "status": st.column_config.SelectboxColumn("Status", options=["New", "Done"]),
+                                "date_added": st.column_config.TextColumn("Date", disabled=True)
+                            }, hide_index=True)
+    
+    if st.button("Save Changes"):
+        # Merge changes back to master DF
+        for i, row in edited.iterrows():
+            idx = df[df['vocab'] == row['vocab']].index
+            if not idx.empty:
+                df.loc[idx, ['phrase', 'status']] = [row['phrase'], row['status']]
+        save_to_github(df)
+        st.toast("Saved changes!")
 
 with tab3:
-    st.subheader("📇 Generate Cyberpunk Anki Deck")
+    st.subheader("Generate Anki")
+    c1, c2 = st.columns(2)
+    c1.metric("Total", len(df)); c2.metric("New", len(df[df['status']=='New']))
     
-    # NEW: Live Preview Expander
-    with st.expander("👁️ Preview Card Style"):
-        st.markdown(f"<style>{CYBERPUNK_CSS}</style>", unsafe_allow_html=True)
-        preview_html = """
-        <div class="card">
-            <div class="vellum-focus-container back">
-                <div class="prompt-text solved-text"><span class="cloze">Serendipity</span> is key.</div>
-            </div>
-            <div class="vellum-detail-container">
-                <div class="vellum-section"><div class="section-header">📜 DEFINITION</div><div class="content">The occurrence of events by chance in a happy or beneficial way.</div></div>
-                <div class="vellum-section"><div class="section-header">🗣️ PRONUNCIATION</div><div class="content"><b>[Noun]</b> /ˌser.ənˈdɪp.ə.ti/</div></div>
-            </div>
-        </div>
-        """
-        st.markdown(preview_html, unsafe_allow_html=True)
-
-    if df.empty: st.info("Add words first!")
-    else:
-        col_new, col_all = st.columns(2)
-        col_new.metric("New Words", len(df[df['status'] == 'New']))
-        col_all.metric("Total Words", len(df))
-        st.divider()
+    # NEW: Date Filter
+    filter_mode = st.selectbox("Filter words by:", ["All 'New' Words", "Added Today", "Added Last 7 Days"])
+    
+    if st.button("🚀 Generate Deck", type="primary"):
+        # Logic for filter
+        target_df = df[df['status'] == 'New'].copy()
         
-        deck_name_input = st.text_input("📦 Deck Name", value="-English Learning::Vocabulary")
-        c1, c2, c3 = st.columns(3)
-        with c1: batch_size = st.slider("⚡ Batch Size", 1, 10, 5)
-        with c2: include_audio = st.checkbox("🔊 Audio", value=True)
-        with c3: process_only_new = st.checkbox("Only process 'New'", value=True)
-
-        if st.button("🚀 Generate Deck", type="primary", use_container_width=True):
-            subset = df[df['status'] == 'New'] if process_only_new else df
-            if subset.empty: st.warning("⚠️ No words to process!")
-            else:
-                raw_notes = process_anki_data(subset, batch_size=batch_size)
-                if not raw_notes: st.error("❌ Generation failed. Check API Key.")
-                else:
-                    with st.spinner("📦 Packaging Deck..."):
-                        apkg_buffer = create_anki_package(raw_notes, deck_name_input, generate_audio=include_audio)
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-                    st.success(f"🎉 {len(raw_notes)} cards ready!")
-                    st.download_button("📥 Download .apkg", apkg_buffer, f"AnkiDeck_{timestamp}.apkg", "application/octet-stream", use_container_width=True)
-                    if process_only_new:
-                        df.loc[df['vocab'].isin(subset['vocab']), 'status'] = 'Done'
-                        save_to_github(df)
-                        st.caption("✅ Marked processed words as 'Done' in cloud.")
+        if filter_mode == "Added Today":
+            today = datetime.now().strftime("%Y-%m-%d")
+            target_df = target_df[target_df['date_added'] == today]
+        elif filter_mode == "Added Last 7 Days":
+            cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            target_df = target_df[target_df['date_added'] >= cutoff]
+            
+        if target_df.empty:
+            st.warning("No words match your filter!")
+        else:
+            raw_notes = process_data(target_df)
+            if raw_notes:
+                apkg = make_package(raw_notes, "MyVocabDeck")
+                st.download_button("Download .apkg", apkg, "deck.apkg")
+                
+                # Auto-update status
+                df.loc[df['vocab'].isin(target_df['vocab']), 'status'] = 'Done'
+                save_to_github(df)
+                st.success(f"Processed {len(raw_notes)} cards & updated status!")
+    
