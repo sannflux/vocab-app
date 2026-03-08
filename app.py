@@ -49,7 +49,7 @@ with st.sidebar:
     )
     
     # 2. Model Selection
-    GEMINI_MODEL = st.selectbox("🤖 AI Model", ["gemini-1.5-flash", "gemini-2.0-flash-exp"], index=0)
+    GEMINI_MODEL = st.selectbox("🤖 AI Model", ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"], index=0)
     
     st.divider()
     
