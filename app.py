@@ -48,7 +48,7 @@ with st.sidebar:
         index=0
     )
     
-    # 2. Model Selection
+    # 2. Model Selection (UNCHANGED)
     GEMINI_MODEL = st.selectbox("🤖 AI Model", ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"], index=0)
     
     st.divider()
@@ -155,17 +155,20 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
         # batch is list of tuples: (vocab, phrase)
         batch_dicts = [{"vocab": v[0], "phrase": v[1]} for v in batch]
 
+        # UPDATE: Improved Prompt with Context Hint Logic
         prompt = f"""You are an expert lexicographer. Output ONLY a JSON array.
 RULES: 
 1. Copy ALL fields exactly. 
-2. If phrase is provided: Define the vocab word based STRICTLY on how it is used in that phrase.
-3. If phrase is empty: generate ONE simple sentence (max 12 words) using the most common definition.
-4. EXACT vocab unchanged.
+2. IF 'phrase' starts with '*': Treat it as a CONTEXT HINT (e.g. phrase='*bird' for vocab='crane'). Use this hint to pick the specific definition, but generate a NEW sentence for the final 'phrase' field.
+3. IF 'phrase' is normal text: Define based on that usage.
+4. IF 'phrase' is empty: Generate ONE simple sentence (max 12 words) using the most common definition.
+5. EXACT vocab unchanged.
 NEVER use markdown, asterisks, bold, italic, or any formatting. Plain text only.
 OUTPUT FORMAT: [{{"vocab": "...", "phrase": "...", "translation": "{TARGET_LANG} meaning", "part_of_speech": "...", "pronunciation_ipa": "/.../", "definition_english": "...", "example_sentences": ["..."], "synonyms_antonyms": {{"synonyms": [], "antonyms": []}}, "etymology": "Plain text only."}}]
 BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
 
-        for attempt in range(3):
+        # UPDATE: Robust Retry with Exponential Backoff
+        for attempt in range(5):
             try:
                 response = model.generate_content(prompt)
                 parsed = robust_json_parse(response.text)
@@ -173,9 +176,12 @@ BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
                     all_card_data.extend(parsed)
                     break
             except Exception as e:
-                print(f"Gemini Attempt {attempt} failed: {e}")
-                time.sleep(1.5 * (attempt + 1))
-        time.sleep(0.5)
+                wait_time = (2 ** attempt) + 1
+                # Only print to console to keep UI clean, or use toast
+                print(f"⚠️ API Error (Attempt {attempt+1}): {e}. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+        else:
+             st.error(f"❌ Batch failed after 5 attempts. Skipping batch starting with: {batch[0][0]}")
 
     progress_bar.progress(1.0, text="✅ AI Generation Complete!")
     time.sleep(0.5)
@@ -183,6 +189,9 @@ BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
     return all_card_data
 
 def process_anki_data(df_subset, batch_size=6):
+    # UPDATE: Filter out garbage data before sending to API
+    df_subset = df_subset[df_subset['vocab'].astype(str).str.strip().str.len() > 0].copy()
+    
     vocab_phrase_list = df_subset[['vocab', 'phrase']].values.tolist()
     all_card_data = generate_anki_card_data_batched(vocab_phrase_list, batch_size=batch_size)
     processed_notes = []
@@ -349,6 +358,10 @@ def load_data():
         st.stop()
 
 def save_to_github(dataframe):
+    # UPDATE: Remove empty vocabs and drop duplicates to prevent bugs
+    dataframe = dataframe[dataframe['vocab'].astype(str).str.strip().str.len() > 0]
+    dataframe = dataframe.drop_duplicates(subset=['vocab'], keep='last')
+    
     csv_data = dataframe.to_csv(index=False)
     try:
         file = repo.get_contents("vocabulary.csv")
@@ -368,15 +381,19 @@ with st.sidebar:
     if not df.empty:
         today_str = date.today().isoformat()
         random.seed(today_str)
-        row = df.sample(n=1).iloc[0]
-        wotd_vocab = row["vocab"]
-        wotd_phrase = row["phrase"]
-        
-        st.subheader(wotd_vocab.upper())
-        if wotd_phrase: st.caption(wotd_phrase)
-        
-        if st.button("🔊 Pronounce"):
-            speak_word(wotd_vocab)
+        # Handle cases where sampling might fail on tiny dataframes
+        try:
+            row = df.sample(n=1).iloc[0]
+            wotd_vocab = row["vocab"]
+            wotd_phrase = row["phrase"]
+            
+            st.subheader(wotd_vocab.upper())
+            if wotd_phrase: st.caption(wotd_phrase)
+            
+            if st.button("🔊 Pronounce"):
+                speak_word(wotd_vocab)
+        except:
+            pass
     else:
         st.info("No words yet!")
 
@@ -385,9 +402,10 @@ tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit / Review", "📇 Generate An
 
 with tab1:
     st.subheader("Add new word")
+    st.caption("Tip: Start phrase with `*` to give a context hint (e.g. `*bird` for 'crane')")
     with st.form("add_form", clear_on_submit=True):
         v = st.text_input("📝 Vocab", placeholder="e.g. serendipity").lower().strip()
-        p_raw = st.text_input("🔤 Phrase (type 1 to skip)", placeholder="I found it by serendipity!").strip()
+        p_raw = st.text_input("🔤 Phrase", placeholder="I found it by serendipity! (or type '1' to skip)").strip()
         
         exists = False
         if v and not df.empty and v in df['vocab'].values:
@@ -398,7 +416,13 @@ with tab1:
 
     if submitted:
         if v:
-            p = "" if p_raw.upper() == "1" else p_raw.capitalize()
+            if p_raw == "1":
+                p = ""
+            elif p_raw.startswith("*"):
+                p = p_raw # Keep context hints as is
+            else:
+                p = p_raw.capitalize()
+                
             if exists:
                 df.loc[df['vocab'] == v, 'phrase'] = p
                 df.loc[df['vocab'] == v, 'status'] = 'New' # Reset status if updated
