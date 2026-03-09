@@ -3,7 +3,7 @@ import pandas as pd
 from github import Github, GithubException
 import io
 import random
-from datetime import date, datetime
+from datetime import date, datetime, timezone, timedelta
 import google.generativeai as genai
 import json
 import re
@@ -35,6 +35,11 @@ except KeyError as e:
     st.error(f"❌ Missing Secret: {e}. Check your .streamlit/secrets.toml")
     st.stop()
 
+# --- TIMEZONE (WIB UTC+7) ---
+WIB = timezone(timedelta(hours=7))
+def get_wib_now():
+    return datetime.now(WIB).strftime("%d-%m-%Y %H:%M")
+
 # --- SESSION STATE INIT ---
 if "gemini_key" not in st.session_state:
     st.session_state.gemini_key = DEFAULT_GEMINI_KEY
@@ -48,6 +53,8 @@ if "audio_accent" not in st.session_state:
     st.session_state.audio_accent = "com"
 if "audio_speed" not in st.session_state:
     st.session_state.audio_speed = False
+if "custom_prompt" not in st.session_state:
+    st.session_state.custom_prompt = ""
 
 # ========================== GITHUB CONNECT ==========================
 try:
@@ -65,9 +72,15 @@ def load_data_from_github():
         df = pd.read_csv(io.StringIO(file_content.decoded_content.decode('utf-8')))
         df['phrase'] = df['phrase'].fillna("")
         if 'status' not in df.columns: df['status'] = 'New'
+        
+        # WIB DATE FIX: Ensure column exists and clean up 'None'
+        if 'date_added' not in df.columns:
+            df['date_added'] = get_wib_now()
+        df['date_added'] = df['date_added'].fillna(get_wib_now()).replace("None", get_wib_now())
+        
         return df.sort_values(by="vocab", ignore_index=True)
     except GithubException as e:
-        if e.status == 404: return pd.DataFrame(columns=['vocab', 'phrase', 'status'])
+        if e.status == 404: return pd.DataFrame(columns=['vocab', 'phrase', 'status', 'date_added'])
         else: st.error(f"❌ CRITICAL: GitHub Error {e.status}"); st.stop()
     except Exception as e:
         st.error(f"❌ CRITICAL: CSV Error. {e}"); st.stop()
@@ -78,7 +91,7 @@ def save_to_github(dataframe):
     csv_data = dataframe.to_csv(index=False)
     try:
         file = repo.get_contents("vocabulary.csv")
-        repo.update_file(file.path, "Updated vocab via app", csv_data, file.sha)
+        repo.update_file(file.path, f"Vocab App Update - {get_wib_now()}", csv_data, file.sha)
     except GithubException as e:
         if e.status == 404: repo.create_file("vocabulary.csv", "Initial commit", csv_data)
     load_data_from_github.clear()
@@ -93,6 +106,9 @@ with st.sidebar:
     st.header("⚙️ Settings")
     TARGET_LANG = st.selectbox("🎯 Definition Language", ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"], index=0)
     GEMINI_MODEL = st.selectbox("🤖 AI Model", ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"], index=0)
+    
+    # CUSTOM PROMPT INJECTOR
+    st.session_state.custom_prompt = st.text_area("🧠 Custom AI Rules (Optional)", value=st.session_state.custom_prompt, placeholder="e.g., Make examples funny, use business context...")
     
     st.divider()
     
@@ -233,6 +249,8 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
     all_card_data = []
     progress_bar = st.progress(0)
     total_items = len(vocab_phrase_list)
+    
+    custom_rule = f"\n5. CUSTOM RULE: {st.session_state.custom_prompt}" if st.session_state.custom_prompt else ""
 
     for i in range(0, total_items, batch_size):
         progress_bar.progress(i / total_items, text=f"🤖 AI Processing {i}/{total_items} words...")
@@ -244,9 +262,9 @@ RULES:
 1. Copy ALL fields exactly. 
 2. IF 'phrase' starts with '*': Treat it as a CONTEXT HINT. Use this hint to pick the specific definition, but generate a NEW sentence for the final 'phrase' field.
 3. IF 'phrase' is normal text: Define based on that usage.
-4. IF 'phrase' is empty: Generate ONE simple sentence (max 12 words).
+4. IF 'phrase' is empty: Generate ONE simple sentence (max 12 words).{custom_rule}
 NEVER use markdown formatting. Plain text only.
-OUTPUT FORMAT: [{{"vocab": "...", "phrase": "...", "translation": "{TARGET_LANG} meaning", "part_of_speech": "...", "pronunciation_ipa": "/.../", "definition_english": "...", "example_sentences": ["..."], "synonyms_antonyms": {{"synonyms": [], "antonyms": []}}, "etymology": "Plain text only."}}]
+OUTPUT FORMAT: [{{"vocab": "...", "phrase": "...", "phrase_translation": "{TARGET_LANG} translation of the entire phrase/sentence", "translation": "{TARGET_LANG} meaning of the vocab word itself", "part_of_speech": "...", "pronunciation_ipa": "/.../", "definition_english": "...", "example_sentences": ["..."], "synonyms_antonyms": {{"synonyms": [], "antonyms": []}}, "etymology": "Plain text only."}}]
 BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
 
         for attempt in range(5):
@@ -281,6 +299,9 @@ def process_anki_data(df_subset, batch_size=6):
         phrase = cap_each_sentence(clean_grammar(normalize_spaces(card_data.get("phrase", ""))))
         phrase = fix_vocab_casing(ensure_trailing_dot(phrase), vocab_raw)
         formatted_phrase = highlight_vocab(phrase, vocab_raw) if phrase else ""
+        
+        # New Context Translation
+        phrase_translation = ensure_trailing_dot(clean_grammar(normalize_spaces(card_data.get("phrase_translation", ""))))
 
         translation = ensure_trailing_dot(clean_grammar(normalize_spaces(card_data.get("translation", "?"))))
         pos = str(card_data.get("part_of_speech", "")).title()
@@ -299,8 +320,9 @@ def process_anki_data(df_subset, batch_size=6):
         pronunciation_field = f"<b>[{pos}]</b> {ipa}" if ipa else f"<b>[{pos}]</b>"
 
         processed_notes.append({
-            "VocabRaw": vocab_raw, "Text": text_field, "Pronunciation": pronunciation_field, 
-            "Definition": eng_def, "Examples": examples_field, "Synonyms": synonyms_field, 
+            "VocabRaw": vocab_raw, "Text": text_field, "PhraseTranslation": phrase_translation,
+            "Pronunciation": pronunciation_field, "Definition": eng_def, 
+            "Examples": examples_field, "Synonyms": synonyms_field, 
             "Antonyms": antonyms_field, "Etymology": etymology
         })
     return processed_notes
@@ -323,6 +345,7 @@ THEMES = {
         .card { font-family: 'Roboto Mono', monospace; font-size: 18px; line-height: 1.5; color: #00ff41; background-color: #111111; padding: 30px 20px; text-align: left; }
         .vellum-focus-container { background: #0d0d0d; padding: 30px 20px; margin: 0 auto 40px; border: 2px solid #00ff41; box-shadow: 0 0 5px #00ff41; text-align: center; }
         .prompt-text { font-family: sans-serif; font-size: 1.8em; font-weight: 900; color: #ffffff; text-shadow: 1px 1px 0 #ff00ff, -1px -1px 0 #00ffff; }
+        .context-translation { font-style: italic; color: #ff00ff; font-size: 0.9em; margin-top: 10px; }
         .cloze { color: #111111; background-color: #00ff41; padding: 2px 4px; }
         .solved-text .cloze { color: #ff00ff; background: none; border-bottom: 3px double #00ffff; text-shadow: 0 0 5px #ff00ff; }
         .vellum-section { margin: 15px 0; padding: 10px 0; border-bottom: 1px dashed #00ff41; }
@@ -333,6 +356,7 @@ THEMES = {
         .card { font-family: 'Inter', sans-serif; font-size: 18px; line-height: 1.6; color: #333333; background-color: #ffffff; padding: 30px 20px; text-align: left; }
         .vellum-focus-container { background: #f9fafb; padding: 30px 20px; margin: 0 auto 40px; border-radius: 8px; border: 1px solid #e5e7eb; text-align: center; }
         .prompt-text { font-size: 1.6em; font-weight: 700; color: #111827; }
+        .context-translation { font-style: italic; color: #4b5563; font-size: 0.9em; margin-top: 10px; }
         .cloze { color: #ffffff; background-color: #3b82f6; border-radius: 4px; padding: 2px 6px; }
         .solved-text .cloze { color: #2563eb; background: none; border-bottom: 2px solid #3b82f6; }
         .vellum-section { margin: 15px 0; padding: 10px 0; border-bottom: 1px solid #f3f4f6; }
@@ -343,6 +367,7 @@ THEMES = {
         .nightMode .card { background-color: #121212 !important; color: #e0e0e0 !important; }
         .nightMode .vellum-focus-container { background: #1e1e1e !important; border-color: #333 !important; }
         .nightMode .prompt-text { color: #ffffff !important; }
+        .nightMode .context-translation { color: #9ca3af !important; }
         .nightMode .solved-text .cloze { color: #60a5fa !important; border-bottom-color: #60a5fa !important; }
         .nightMode .vellum-section { border-bottom-color: #333 !important; }
         .nightMode .section-header { color: #9ca3af !important; }
@@ -352,6 +377,7 @@ THEMES = {
         .card { font-family: 'Merriweather', serif; font-size: 18px; line-height: 1.6; color: #d4c4a8; background-color: #2c2826; padding: 30px 20px; text-align: left; }
         .vellum-focus-container { background: #231f1d; padding: 30px 20px; margin: 0 auto 40px; border: 1px solid #4a4138; border-radius: 4px; text-align: center; }
         .prompt-text { font-size: 1.8em; font-weight: 700; color: #e8dcc7; }
+        .context-translation { font-style: italic; color: #b08d57; font-size: 0.9em; margin-top: 10px; }
         .cloze { color: #2c2826; background-color: #b08d57; padding: 2px 4px; border-radius: 2px; }
         .solved-text .cloze { color: #cba873; background: none; font-style: italic; border-bottom: 1px solid #cba873; }
         .vellum-section { margin: 15px 0; padding: 10px 0; border-bottom: 1px dashed #4a4138; }
@@ -363,7 +389,10 @@ THEMES = {
 # ========================== GENANKI LOGIC ==========================
 def create_anki_package(notes_data, deck_name, css_theme, generate_audio=True, max_per_deck=0):
     front_html = """<div class="vellum-focus-container front"><div class="prompt-text">{{cloze:Text}}</div></div>"""
-    back_html = """<div class="vellum-focus-container back"><div class="prompt-text solved-text">{{cloze:Text}}</div></div>
+    back_html = """<div class="vellum-focus-container back">
+  <div class="prompt-text solved-text">{{cloze:Text}}</div>
+  {{#PhraseTranslation}}<div class="context-translation">{{PhraseTranslation}}</div>{{/PhraseTranslation}}
+</div>
 <div class="vellum-detail-container">
   {{#Definition}}<div class="vellum-section"><div class="section-header">📜 DEFINITION</div><div class="content">{{Definition}}</div></div>{{/Definition}}
   {{#Pronunciation}}<div class="vellum-section"><div class="section-header">🗣️ PRONUNCIATION</div><div class="content">{{Pronunciation}}</div></div>{{/Pronunciation}}
@@ -374,8 +403,8 @@ def create_anki_package(notes_data, deck_name, css_theme, generate_audio=True, m
 </div>{{Audio}}"""
 
     my_model = genanki.Model(
-        1607392319, 'Custom Vocab Model',
-        fields=[{'name': 'Text'}, {'name': 'Pronunciation'}, {'name': 'Definition'}, {'name': 'Examples'}, {'name': 'Synonyms'}, {'name': 'Antonyms'}, {'name': 'Etymology'}, {'name': 'Audio'}],
+        1607392320, 'Custom Vocab Model v2',
+        fields=[{'name': 'Text'}, {'name': 'PhraseTranslation'}, {'name': 'Pronunciation'}, {'name': 'Definition'}, {'name': 'Examples'}, {'name': 'Synonyms'}, {'name': 'Antonyms'}, {'name': 'Etymology'}, {'name': 'Audio'}],
         templates=[{'name': 'Card 1', 'qfmt': front_html, 'afmt': back_html}],
         css=css_theme,
         model_type=genanki.Model.CLOZE 
@@ -398,7 +427,6 @@ def create_anki_package(notes_data, deck_name, css_theme, generate_audio=True, m
                     progress_bar.progress((i + 1) / len(unique_vocabs), text=f"🔊 Generating Audio: {vocab_key}...")
             progress_bar.empty()
 
-        # --- AUTO DECK SPLITTER LOGIC ---
         decks = []
         base_deck_id = 2059400110
         
@@ -412,7 +440,7 @@ def create_anki_package(notes_data, deck_name, css_theme, generate_audio=True, m
                     my_note = genanki.Note(
                         model=my_model,
                         fields=[
-                            note_data['Text'], note_data['Pronunciation'], note_data['Definition'],
+                            note_data['Text'], note_data['PhraseTranslation'], note_data['Pronunciation'], note_data['Definition'],
                             note_data['Examples'], note_data['Synonyms'], note_data['Antonyms'],
                             note_data['Etymology'], audio_tag
                         ]
@@ -426,7 +454,7 @@ def create_anki_package(notes_data, deck_name, css_theme, generate_audio=True, m
                 my_note = genanki.Note(
                     model=my_model,
                     fields=[
-                        note_data['Text'], note_data['Pronunciation'], note_data['Definition'],
+                        note_data['Text'], note_data['PhraseTranslation'], note_data['Pronunciation'], note_data['Definition'],
                         note_data['Examples'], note_data['Synonyms'], note_data['Antonyms'],
                         note_data['Etymology'], audio_tag
                     ]
@@ -485,7 +513,6 @@ with tab1:
         with st.form("add_form", clear_on_submit=True):
             v = st.text_input("📝 Vocab", placeholder="e.g. serendipity").lower().strip()
             
-            # --- SAFE DUPLICATE PREVENTION UI ---
             if v and not st.session_state.vocab_df.empty and v in st.session_state.vocab_df['vocab'].values:
                 st.warning(f"⚠️ '{v}' is already in your list! Saving will update its phrase and mark it as 'New'.")
                 
@@ -497,7 +524,7 @@ with tab1:
             if not st.session_state.vocab_df.empty and v in st.session_state.vocab_df['vocab'].values:
                 st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'] == v, ['phrase', 'status']] = [p, 'New']
             else:
-                new_row = pd.DataFrame([{"vocab": v, "phrase": p, "status": "New"}])
+                new_row = pd.DataFrame([{"vocab": v, "phrase": p, "status": "New", "date_added": get_wib_now()}])
                 st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, new_row], ignore_index=True)
             
             st.session_state.unsaved_changes = True
@@ -514,7 +541,7 @@ with tab1:
                 parts = clean_line.split(',', 1)
                 bv = parts[0].strip().lower()
                 bp = parts[1].strip() if len(parts) > 1 else ""
-                if bv: new_rows.append({"vocab": bv, "phrase": bp, "status": "New"})
+                if bv: new_rows.append({"vocab": bv, "phrase": bp, "status": "New", "date_added": get_wib_now()})
             
             if new_rows:
                 new_df = pd.DataFrame(new_rows)
@@ -527,7 +554,6 @@ with tab2:
     else:
         st.subheader(f"✏️ Edit List ({len(st.session_state.vocab_df)} words)")
         
-        # --- NEW SORT & UNDO BUTTONS ---
         c_sort, c_undo = st.columns(2)
         with c_sort:
             if st.button("🔤 Sort Alphabetically", use_container_width=True):
@@ -555,22 +581,18 @@ with tab2:
         if filter_new: display_df = display_df[display_df['status'] == 'New']
         
         st.caption("💡 Select a row and press `Delete` on your keyboard to remove words.")
-        edited = st.data_editor(display_df, num_rows="dynamic", use_container_width=True, hide_index=True, column_config={"status": st.column_config.SelectboxColumn("Status", options=["New", "Done"], required=True)})
+        edited = st.data_editor(display_df, num_rows="dynamic", use_container_width=True, hide_index=True, column_config={"status": st.column_config.SelectboxColumn("Status", options=["New", "Done"], required=True), "date_added": st.column_config.TextColumn("Date Added (WIB)", disabled=True)})
         
         if st.button("💾 Confirm Edits", type="primary", use_container_width=True):
-            # SAFE DELETION & TRASH CAN LOGIC
             original_vocabs = set(display_df['vocab'])
             edited_vocabs = set(edited['vocab'])
             deleted_vocabs = original_vocabs - edited_vocabs
             
             if deleted_vocabs:
-                # Save deleted rows to history for Undo
                 deleted_df = st.session_state.vocab_df[st.session_state.vocab_df['vocab'].isin(deleted_vocabs)].copy()
                 st.session_state.deleted_rows_history.append(deleted_df)
-                # Remove from main dataframe
                 st.session_state.vocab_df = st.session_state.vocab_df[~st.session_state.vocab_df['vocab'].isin(deleted_vocabs)]
             
-            # Update edited changes
             for index, row in edited.iterrows():
                 mask = st.session_state.vocab_df['vocab'] == row['vocab']
                 st.session_state.vocab_df.loc[mask, ['phrase', 'status']] = [row['phrase'], row['status']]
@@ -585,7 +607,6 @@ with tab3:
     
     selected_theme = st.selectbox("🎨 Select Card Theme", list(THEMES.keys()), index=0)
     
-    # --- LIVE AI SANDBOX ---
     with st.expander("🧪 AI Sandbox (Test 1 Word Live)"):
         test_words = st.session_state.vocab_df[st.session_state.vocab_df['status'] == 'New']['vocab'].tolist()
         if not test_words:
@@ -608,7 +629,7 @@ with tab3:
                         if note['Examples']: back_details += f"<div class='vellum-section'><div class='section-header'>🖋️ EXAMPLES</div><div class='content'>{note['Examples']}</div></div>"
                         
                         front_preview = f"""<div class="card" style="margin-bottom: 20px;"><div class="vellum-focus-container front"><div class="prompt-text">{note['Text']}</div></div></div>"""
-                        back_preview = f"""<div class="card"><div class="vellum-focus-container back"><div class="prompt-text solved-text">{solved_text}</div></div><div class="vellum-detail-container">{back_details}</div></div>"""
+                        back_preview = f"""<div class="card"><div class="vellum-focus-container back"><div class="prompt-text solved-text">{solved_text}</div><div class="context-translation">{note['PhraseTranslation']}</div></div><div class="vellum-detail-container">{back_details}</div></div>"""
                         
                         st.markdown(f"<style>{THEMES[selected_theme]}</style>", unsafe_allow_html=True)
                         st.caption("FRONT OF CARD:")
@@ -627,7 +648,6 @@ with tab3:
         
         st.session_state.deck_name = st.text_input("📦 Base Deck Name", value=st.session_state.deck_name)
         
-        # --- NEW SPLIT CONTROLS ---
         c1, c2, c3, c4 = st.columns(4)
         with c1: batch_size = st.slider("⚡ Batch Size", 1, 10, 5)
         with c2: include_audio = st.checkbox("🔊 Audio", value=True)
