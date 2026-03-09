@@ -338,6 +338,15 @@ THEMES = {
         .vellum-section { margin: 15px 0; padding: 10px 0; border-bottom: 1px solid #f3f4f6; }
         .section-header { font-weight: 600; color: #6b7280; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; }
         .content { color: #4b5563; }
+        
+        /* --- NIGHT MODE OVERRIDES --- */
+        .nightMode .card { background-color: #121212 !important; color: #e0e0e0 !important; }
+        .nightMode .vellum-focus-container { background: #1e1e1e !important; border-color: #333 !important; }
+        .nightMode .prompt-text { color: #ffffff !important; }
+        .nightMode .solved-text .cloze { color: #60a5fa !important; border-bottom-color: #60a5fa !important; }
+        .nightMode .vellum-section { border-bottom-color: #333 !important; }
+        .nightMode .section-header { color: #9ca3af !important; }
+        .nightMode .content { color: #d1d5db !important; }
     """,
     "Dark Academia": """
         .card { font-family: 'Merriweather', serif; font-size: 18px; line-height: 1.6; color: #d4c4a8; background-color: #2c2826; padding: 30px 20px; text-align: left; }
