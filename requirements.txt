@@ -1,6 +1,7 @@
 streamlit
-PyGithub
 pandas
+PyGithub
 google-generativeai
 gTTS
 genanki
+altair
