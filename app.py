@@ -352,7 +352,7 @@ THEMES = {
 }
 
 # ========================== GENANKI LOGIC ==========================
-def create_anki_package(notes_data, deck_name, css_theme, generate_audio=True):
+def create_anki_package(notes_data, deck_name, css_theme, generate_audio=True, max_per_deck=0):
     front_html = """<div class="vellum-focus-container front"><div class="prompt-text">{{cloze:Text}}</div></div>"""
     back_html = """<div class="vellum-focus-container back"><div class="prompt-text solved-text">{{cloze:Text}}</div></div>
 <div class="vellum-detail-container">
@@ -371,7 +371,7 @@ def create_anki_package(notes_data, deck_name, css_theme, generate_audio=True):
         css=css_theme,
         model_type=genanki.Model.CLOZE 
     )
-    my_deck = genanki.Deck(2059400110, deck_name)
+    
     media_files = []
     
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -380,7 +380,6 @@ def create_anki_package(notes_data, deck_name, css_theme, generate_audio=True):
             progress_bar = st.progress(0)
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
                 unique_vocabs = {n['VocabRaw'] for n in notes_data if n['VocabRaw']}
-                # Passed new audio settings to the executor
                 future_to_vocab = {executor.submit(generate_audio_file, v, temp_dir, st.session_state.audio_accent, st.session_state.audio_speed): v for v in unique_vocabs}
                 for i, future in enumerate(concurrent.futures.as_completed(future_to_vocab)):
                     vocab_key, fname, fpath = future.result()
@@ -390,20 +389,45 @@ def create_anki_package(notes_data, deck_name, css_theme, generate_audio=True):
                     progress_bar.progress((i + 1) / len(unique_vocabs), text=f"🔊 Generating Audio: {vocab_key}...")
             progress_bar.empty()
 
-        for note_data in notes_data:
-            audio_tag = audio_map.get(note_data['VocabRaw'], "")
-            my_note = genanki.Note(
-                model=my_model,
-                fields=[
-                    note_data['Text'], note_data['Pronunciation'], note_data['Definition'],
-                    note_data['Examples'], note_data['Synonyms'], note_data['Antonyms'],
-                    note_data['Etymology'], audio_tag
-                ]
-            )
-            my_deck.add_note(my_note)
+        # --- AUTO DECK SPLITTER LOGIC ---
+        decks = []
+        base_deck_id = 2059400110
         
-        my_package = genanki.Package(my_deck)
+        if max_per_deck > 0 and len(notes_data) > max_per_deck:
+            chunks = [notes_data[i:i + max_per_deck] for i in range(0, len(notes_data), max_per_deck)]
+            for idx, chunk in enumerate(chunks):
+                subdeck_name = f"{deck_name}::Part {idx + 1}"
+                subdeck = genanki.Deck(base_deck_id + idx, subdeck_name)
+                for note_data in chunk:
+                    audio_tag = audio_map.get(note_data['VocabRaw'], "")
+                    my_note = genanki.Note(
+                        model=my_model,
+                        fields=[
+                            note_data['Text'], note_data['Pronunciation'], note_data['Definition'],
+                            note_data['Examples'], note_data['Synonyms'], note_data['Antonyms'],
+                            note_data['Etymology'], audio_tag
+                        ]
+                    )
+                    subdeck.add_note(my_note)
+                decks.append(subdeck)
+        else:
+            single_deck = genanki.Deck(base_deck_id, deck_name)
+            for note_data in notes_data:
+                audio_tag = audio_map.get(note_data['VocabRaw'], "")
+                my_note = genanki.Note(
+                    model=my_model,
+                    fields=[
+                        note_data['Text'], note_data['Pronunciation'], note_data['Definition'],
+                        note_data['Examples'], note_data['Synonyms'], note_data['Antonyms'],
+                        note_data['Etymology'], audio_tag
+                    ]
+                )
+                single_deck.add_note(my_note)
+            decks.append(single_deck)
+            
+        my_package = genanki.Package(decks)
         my_package.media_files = media_files
+        
         buffer = io.BytesIO()
         output_path = os.path.join(temp_dir, 'output.apkg')
         my_package.write_to_file(output_path)
@@ -592,12 +616,14 @@ with tab3:
         col_all.metric("Total Words", len(st.session_state.vocab_df))
         st.divider()
         
-        st.session_state.deck_name = st.text_input("📦 Deck Name", value=st.session_state.deck_name)
+        st.session_state.deck_name = st.text_input("📦 Base Deck Name", value=st.session_state.deck_name)
         
-        c1, c2, c3 = st.columns(3)
+        # --- NEW SPLIT CONTROLS ---
+        c1, c2, c3, c4 = st.columns(4)
         with c1: batch_size = st.slider("⚡ Batch Size", 1, 10, 5)
         with c2: include_audio = st.checkbox("🔊 Audio", value=True)
         with c3: process_only_new = st.checkbox("Only process 'New'", value=True)
+        with c4: split_deck = st.number_input("Split > X cards (0=No)", min_value=0, value=50, step=10, help="Creates sub-decks natively in Anki.")
 
         if st.button("🚀 Generate Deck", type="primary", use_container_width=True):
             subset = st.session_state.vocab_df[st.session_state.vocab_df['status'] == 'New'] if process_only_new else st.session_state.vocab_df
@@ -607,7 +633,7 @@ with tab3:
                 if not raw_notes: st.error("❌ Generation completely failed. Check API Key.")
                 else:
                     with st.spinner("📦 Packaging Deck..."):
-                        apkg_buffer = create_anki_package(raw_notes, st.session_state.deck_name, THEMES[selected_theme], generate_audio=include_audio)
+                        apkg_buffer = create_anki_package(raw_notes, st.session_state.deck_name, THEMES[selected_theme], generate_audio=include_audio, max_per_deck=split_deck)
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
                     st.success(f"🎉 {len(raw_notes)} cards ready!")
                     st.download_button("📥 Download .apkg", apkg_buffer, f"AnkiDeck_{timestamp}.apkg", "application/octet-stream", use_container_width=True)
