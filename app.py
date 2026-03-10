@@ -506,10 +506,10 @@ with tab1:
     add_mode = st.radio("Mode", ["Single", "Bulk"], horizontal=True, label_visibility="collapsed")
     
     if add_mode == "Single":
-        st.info("💡 **Smart Add:** Paste your phrase and hit 'Enter/Go' on your keyboard to extract words!")
+        st.info("💡 **Smart Add:** Paste your phrase first! (Tap anywhere outside the box after pasting to load words)")
         
-        # 1. User pastes Phrase FIRST (Changed to text_input for Android keyboard "Enter" support)
-        p_raw = st.text_input("🔤 Phrase", key="smart_phrase_input", placeholder="Paste sentence here and press Enter...", help="Start with '*' to give AI a context hint instead of a sentence (e.g., '*bird')")
+        # 1. User pastes Phrase FIRST (Outside of form to allow dynamic reloading)
+        p_raw = st.text_area("🔤 Phrase", key="smart_phrase_input", placeholder="Paste sentence here...", help="Start with '*' to give AI a context hint instead of a sentence (e.g., '*bird')")
         
         v = ""
         # 2. Automatically generate the dropdown if a phrase exists
@@ -525,7 +525,7 @@ with tab1:
                 else:
                     v = v_choice
         else:
-            # Fallback if no phrase is typed yet or user is typing a *hint
+            # Fallback if no phrase is typed yet
             v = st.text_input("📝 Vocab").lower().strip()
             
         # UI Warning if duplicate
