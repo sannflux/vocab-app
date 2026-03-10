@@ -55,6 +55,16 @@ if "audio_speed" not in st.session_state:
     st.session_state.audio_speed = False
 if "custom_prompt" not in st.session_state:
     st.session_state.custom_prompt = ""
+    
+# Form input state management for the Smart Extractor
+if "input_phrase" not in st.session_state:
+    st.session_state.input_phrase = ""
+if "input_vocab" not in st.session_state:
+    st.session_state.input_vocab = ""
+
+def clear_add_inputs():
+    st.session_state.input_phrase = ""
+    st.session_state.input_vocab = ""
 
 # ========================== GITHUB CONNECT ==========================
 try:
@@ -510,25 +520,50 @@ with tab1:
     add_mode = st.radio("Mode", ["Single", "Bulk"], horizontal=True, label_visibility="collapsed")
     
     if add_mode == "Single":
-        with st.form("add_form", clear_on_submit=True):
-            v = st.text_input("📝 Vocab", placeholder="e.g. serendipity").lower().strip()
+        st.info("💡 **Smart Add:** Paste your phrase first! We'll extract the words so you can just click the one you want to learn.")
+        
+        # 1. User pastes Phrase FIRST
+        p_raw = st.text_area("🔤 Phrase", key="input_phrase", placeholder="Paste sentence here...", help="Start with '*' to give AI a context hint instead of a sentence (e.g., '*bird')")
+        
+        v = ""
+        # 2. Automatically generate the dropdown if a phrase exists
+        if p_raw and not p_raw.startswith("*"):
+            # Extract clean words, keep lowercased, remove duplicates but preserve order
+            raw_words = re.findall(r'[^\W\d_]+(?:[-\'][^\W\d_]+)*', p_raw)
+            extracted_words = list(dict.fromkeys([w.lower() for w in raw_words]))
             
-            if v and not st.session_state.vocab_df.empty and v in st.session_state.vocab_df['vocab'].values:
-                st.warning(f"⚠️ '{v}' is already in your list! Saving will update its phrase and mark it as 'New'.")
-                
-            p_raw = st.text_input("🔤 Phrase", placeholder="I found it by serendipity! (or type '1' to skip)", help="Start with '*' to give AI a context hint instead of a sentence (e.g., '*bird')").strip()
-            submitted = st.form_submit_button("💾 Save Word", use_container_width=True)
+            if extracted_words:
+                v_choice = st.selectbox("📝 Select Vocab Word from Phrase", options=["(Type manually)"] + extracted_words)
+                if v_choice == "(Type manually)":
+                    v = st.text_input("Type vocab manually", key="input_vocab").lower().strip()
+                else:
+                    v = v_choice
+        else:
+            # Fallback if no phrase is typed yet
+            v = st.text_input("📝 Vocab", key="input_vocab").lower().strip()
+            
+        # UI Warning if duplicate
+        if v and not st.session_state.vocab_df.empty and v in st.session_state.vocab_df['vocab'].values:
+            st.warning(f"⚠️ '{v}' is already in your list! Saving will update its phrase and mark it as 'New'.")
 
-        if submitted and v:
-            p = "" if p_raw == "1" else p_raw if p_raw.startswith("*") else p_raw.capitalize()
-            if not st.session_state.vocab_df.empty and v in st.session_state.vocab_df['vocab'].values:
-                st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'] == v, ['phrase', 'status']] = [p, 'New']
+        # 3. Save Button
+        if st.button("💾 Save Word", use_container_width=True, type="primary"):
+            if v:
+                p = "" if p_raw == "1" else p_raw if p_raw.startswith("*") else p_raw.capitalize()
+                
+                if not st.session_state.vocab_df.empty and v in st.session_state.vocab_df['vocab'].values:
+                    st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'] == v, ['phrase', 'status']] = [p, 'New']
+                else:
+                    new_row = pd.DataFrame([{"vocab": v, "phrase": p, "status": "New", "date_added": get_wib_now()}])
+                    st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, new_row], ignore_index=True)
+                
+                st.session_state.unsaved_changes = True
+                st.success(f"✅ Saved '{v}'!")
+                clear_add_inputs()
+                time.sleep(1)
+                st.rerun()
             else:
-                new_row = pd.DataFrame([{"vocab": v, "phrase": p, "status": "New", "date_added": get_wib_now()}])
-                st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, new_row], ignore_index=True)
-            
-            st.session_state.unsaved_changes = True
-            st.success(f"✅ Saved '{v}'! (Locally updated. Don't forget to sync)")
+                st.error("❌ Please provide a vocab word.")
 
     else:
         st.info("Paste words separated by newlines. Automatically cleans bullets and numbers!")
