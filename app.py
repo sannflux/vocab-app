@@ -56,15 +56,8 @@ if "audio_speed" not in st.session_state:
 if "custom_prompt" not in st.session_state:
     st.session_state.custom_prompt = ""
     
-# Form input state management for the Smart Extractor
-if "input_phrase" not in st.session_state:
-    st.session_state.input_phrase = ""
-if "input_vocab" not in st.session_state:
-    st.session_state.input_vocab = ""
-
-def clear_add_inputs():
-    st.session_state.input_phrase = ""
-    st.session_state.input_vocab = ""
+if "smart_phrase_input" not in st.session_state:
+    st.session_state.smart_phrase_input = ""
 
 # ========================== GITHUB CONNECT ==========================
 try:
@@ -83,7 +76,6 @@ def load_data_from_github():
         df['phrase'] = df['phrase'].fillna("")
         if 'status' not in df.columns: df['status'] = 'New'
         
-        # WIB DATE FIX: Ensure column exists and clean up 'None'
         if 'date_added' not in df.columns:
             df['date_added'] = get_wib_now()
         df['date_added'] = df['date_added'].fillna(get_wib_now()).replace("None", get_wib_now())
@@ -117,12 +109,10 @@ with st.sidebar:
     TARGET_LANG = st.selectbox("🎯 Definition Language", ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"], index=0)
     GEMINI_MODEL = st.selectbox("🤖 AI Model", ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"], index=0)
     
-    # CUSTOM PROMPT INJECTOR
     st.session_state.custom_prompt = st.text_area("🧠 Custom AI Rules (Optional)", value=st.session_state.custom_prompt, placeholder="e.g., Make examples funny, use business context...")
     
     st.divider()
     
-    # AUDIO SETTINGS
     st.header("🔊 Audio Settings")
     accent_map = {"US English": "com", "UK English": "co.uk", "Australian English": "com.au", "Indian English": "co.in"}
     selected_accent = st.selectbox("Accent", list(accent_map.keys()), index=0)
@@ -131,7 +121,6 @@ with st.sidebar:
     
     st.divider()
     
-    # 🌟 VISUAL PROGRESS DASHBOARD
     st.subheader("📊 Learning Progress")
     if not st.session_state.vocab_df.empty:
         status_counts = st.session_state.vocab_df['status'].value_counts().reset_index()
@@ -156,7 +145,6 @@ with st.sidebar:
 
     st.divider()
     
-    # ☁️ LAZY CLOUD SYNC LOGIC
     if st.session_state.unsaved_changes:
         st.warning("⚠️ You have unsaved changes locally!")
         if st.button("☁️ Sync to GitHub", type="primary", use_container_width=True):
@@ -310,9 +298,7 @@ def process_anki_data(df_subset, batch_size=6):
         phrase = fix_vocab_casing(ensure_trailing_dot(phrase), vocab_raw)
         formatted_phrase = highlight_vocab(phrase, vocab_raw) if phrase else ""
         
-        # New Context Translation
         phrase_translation = ensure_trailing_dot(clean_grammar(normalize_spaces(card_data.get("phrase_translation", ""))))
-
         translation = ensure_trailing_dot(clean_grammar(normalize_spaces(card_data.get("translation", "?"))))
         pos = str(card_data.get("part_of_speech", "")).title()
         ipa = card_data.get("pronunciation_ipa", "")
@@ -520,10 +506,10 @@ with tab1:
     add_mode = st.radio("Mode", ["Single", "Bulk"], horizontal=True, label_visibility="collapsed")
     
     if add_mode == "Single":
-        st.info("💡 **Smart Add:** Paste your phrase first! We'll extract the words so you can just click the one you want to learn.")
+        st.info("💡 **Smart Add:** Paste your phrase first! (Tap anywhere outside the box after pasting to load words)")
         
-        # 1. User pastes Phrase FIRST
-        p_raw = st.text_area("🔤 Phrase", key="input_phrase", placeholder="Paste sentence here...", help="Start with '*' to give AI a context hint instead of a sentence (e.g., '*bird')")
+        # 1. User pastes Phrase FIRST (Outside of form to allow dynamic reloading)
+        p_raw = st.text_area("🔤 Phrase", key="smart_phrase_input", placeholder="Paste sentence here...", help="Start with '*' to give AI a context hint instead of a sentence (e.g., '*bird')")
         
         v = ""
         # 2. Automatically generate the dropdown if a phrase exists
@@ -535,12 +521,12 @@ with tab1:
             if extracted_words:
                 v_choice = st.selectbox("📝 Select Vocab Word from Phrase", options=["(Type manually)"] + extracted_words)
                 if v_choice == "(Type manually)":
-                    v = st.text_input("Type vocab manually", key="input_vocab").lower().strip()
+                    v = st.text_input("Type vocab manually").lower().strip()
                 else:
                     v = v_choice
         else:
             # Fallback if no phrase is typed yet
-            v = st.text_input("📝 Vocab", key="input_vocab").lower().strip()
+            v = st.text_input("📝 Vocab").lower().strip()
             
         # UI Warning if duplicate
         if v and not st.session_state.vocab_df.empty and v in st.session_state.vocab_df['vocab'].values:
@@ -558,8 +544,8 @@ with tab1:
                     st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, new_row], ignore_index=True)
                 
                 st.session_state.unsaved_changes = True
+                st.session_state.smart_phrase_input = "" # Clear text box for next entry
                 st.success(f"✅ Saved '{v}'!")
-                clear_add_inputs()
                 time.sleep(1)
                 st.rerun()
             else:
@@ -615,20 +601,44 @@ with tab2:
         if search: display_df = display_df[display_df['vocab'].str.contains(search, case=False)]
         if filter_new: display_df = display_df[display_df['status'] == 'New']
         
-        st.caption("💡 Select a row and press `Delete` on your keyboard to remove words.")
-        edited = st.data_editor(display_df, num_rows="dynamic", use_container_width=True, hide_index=True, column_config={"status": st.column_config.SelectboxColumn("Status", options=["New", "Done"], required=True), "date_added": st.column_config.TextColumn("Date Added (WIB)", disabled=True)})
+        # MOBILE-FRIENDLY DELETION
+        display_df.insert(0, "🗑️ Delete", False)
+        
+        st.caption("💡 Check the 'Delete' box and click Confirm to remove words (Mobile Friendly!).")
+        
+        edited = st.data_editor(
+            display_df, 
+            num_rows="dynamic", 
+            use_container_width=True, 
+            hide_index=True, 
+            column_config={
+                "status": st.column_config.SelectboxColumn("Status", options=["New", "Done"], required=True), 
+                "date_added": st.column_config.TextColumn("Date Added (WIB)", disabled=True),
+                "🗑️ Delete": st.column_config.CheckboxColumn("🗑️ Delete", default=False)
+            }
+        )
         
         if st.button("💾 Confirm Edits", type="primary", use_container_width=True):
+            
+            # Find rows checked for deletion
+            deleted_vocabs_checkbox = set(edited[edited["🗑️ Delete"] == True]["vocab"])
+            
+            # Find rows deleted via keyboard (for desktop users)
             original_vocabs = set(display_df['vocab'])
-            edited_vocabs = set(edited['vocab'])
-            deleted_vocabs = original_vocabs - edited_vocabs
+            edited_vocabs_all = set(edited['vocab'])
+            keyboard_deleted = original_vocabs - edited_vocabs_all
             
-            if deleted_vocabs:
-                deleted_df = st.session_state.vocab_df[st.session_state.vocab_df['vocab'].isin(deleted_vocabs)].copy()
+            # Combine both deletion methods
+            all_deleted_vocabs = deleted_vocabs_checkbox.union(keyboard_deleted)
+            
+            if all_deleted_vocabs:
+                deleted_df = st.session_state.vocab_df[st.session_state.vocab_df['vocab'].isin(all_deleted_vocabs)].copy()
                 st.session_state.deleted_rows_history.append(deleted_df)
-                st.session_state.vocab_df = st.session_state.vocab_df[~st.session_state.vocab_df['vocab'].isin(deleted_vocabs)]
+                st.session_state.vocab_df = st.session_state.vocab_df[~st.session_state.vocab_df['vocab'].isin(all_deleted_vocabs)]
             
-            for index, row in edited.iterrows():
+            # Process edits for remaining rows
+            remaining_edits = edited[edited["🗑️ Delete"] == False]
+            for index, row in remaining_edits.iterrows():
                 mask = st.session_state.vocab_df['vocab'] == row['vocab']
                 st.session_state.vocab_df.loc[mask, ['phrase', 'status']] = [row['phrase'], row['status']]
             
