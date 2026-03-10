@@ -55,9 +55,10 @@ if "audio_speed" not in st.session_state:
     st.session_state.audio_speed = False
 if "custom_prompt" not in st.session_state:
     st.session_state.custom_prompt = ""
-    
-if "smart_phrase_input" not in st.session_state:
-    st.session_state.smart_phrase_input = ""
+
+# DYNAMIC KEY FOR SAFE WIDGET CLEARING
+if "phrase_key" not in st.session_state:
+    st.session_state.phrase_key = 0
 
 # ========================== GITHUB CONNECT ==========================
 try:
@@ -506,15 +507,17 @@ with tab1:
     add_mode = st.radio("Mode", ["Single", "Bulk"], horizontal=True, label_visibility="collapsed")
     
     if add_mode == "Single":
-        st.info("💡 **Smart Add:** Paste your phrase first! (Tap anywhere outside the box after pasting to load words)")
+        st.info("💡 **Smart Add:** Paste your phrase and hit 'Enter/Go' on your keyboard to extract words!")
         
-        # 1. User pastes Phrase FIRST (Outside of form to allow dynamic reloading)
-        p_raw = st.text_area("🔤 Phrase", key="smart_phrase_input", placeholder="Paste sentence here...", help="Start with '*' to give AI a context hint instead of a sentence (e.g., '*bird')")
+        # --- THE FIX: DYNAMIC KEY TO FORCE WIDGET RESET ---
+        dynamic_key = f"phrase_input_{st.session_state.phrase_key}"
+        
+        # 1. User pastes Phrase FIRST 
+        p_raw = st.text_input("🔤 Phrase", key=dynamic_key, placeholder="Paste sentence here and press Enter...", help="Start with '*' to give AI a context hint instead of a sentence (e.g., '*bird')")
         
         v = ""
         # 2. Automatically generate the dropdown if a phrase exists
         if p_raw and not p_raw.startswith("*"):
-            # Extract clean words, keep lowercased, remove duplicates but preserve order
             raw_words = re.findall(r'[^\W\d_]+(?:[-\'][^\W\d_]+)*', p_raw)
             extracted_words = list(dict.fromkeys([w.lower() for w in raw_words]))
             
@@ -525,7 +528,7 @@ with tab1:
                 else:
                     v = v_choice
         else:
-            # Fallback if no phrase is typed yet
+            # Fallback if no phrase is typed yet or user is typing a *hint
             v = st.text_input("📝 Vocab").lower().strip()
             
         # UI Warning if duplicate
@@ -544,7 +547,10 @@ with tab1:
                     st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, new_row], ignore_index=True)
                 
                 st.session_state.unsaved_changes = True
-                st.session_state.smart_phrase_input = "" # Clear text box for next entry
+                
+                # --- THE FIX EXECUTION: ADVANCE THE KEY TO RESET WIDGET ---
+                st.session_state.phrase_key += 1 
+                
                 st.success(f"✅ Saved '{v}'!")
                 time.sleep(1)
                 st.rerun()
