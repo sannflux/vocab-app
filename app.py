@@ -56,38 +56,6 @@ WIB = timezone(timedelta(hours=7))
 def get_wib_now():
     return datetime.now(WIB).strftime("%d-%m-%Y %H:%M")
 
-# --- SESSION STATE INIT ---
-if "gemini_key" not in st.session_state:
-    st.session_state.gemini_key = DEFAULT_GEMINI_KEY
-if "unsaved_changes" not in st.session_state:
-    st.session_state.unsaved_changes = False
-if "deck_name" not in st.session_state:
-    st.session_state.deck_name = "-English Learning::Vocabulary"
-if "deleted_rows_history" not in st.session_state:
-    st.session_state.deleted_rows_history = []
-if "audio_accent" not in st.session_state:
-    st.session_state.audio_accent = "com"
-if "audio_speed" not in st.session_state:
-    st.session_state.audio_speed = False
-if "custom_prompt" not in st.session_state:
-    st.session_state.custom_prompt = ""
-if "auto_sync" not in st.session_state:
-    st.session_state.auto_sync = False
-if "cefr_level" not in st.session_state:
-    st.session_state.cefr_level = "B2 (Upper Intermediate)"
-
-if "phrase_key" not in st.session_state:
-    st.session_state.phrase_key = 0
-
-if "quiz_active_word" not in st.session_state:
-    st.session_state.quiz_active_word = None
-if "quiz_options" not in st.session_state:
-    st.session_state.quiz_options = []
-if "quiz_answered" not in st.session_state:
-    st.session_state.quiz_answered = False
-if "quiz_correct" not in st.session_state:
-    st.session_state.quiz_correct = False
-
 # ========================== GITHUB CONNECT ==========================
 try:
     auth = Auth.Token(token)
@@ -131,7 +99,46 @@ def save_to_github(dataframe):
     load_data_from_github.clear()
     return True
 
-# --- NEW: AUTO-SYNC HELPER ---
+# --- NEW: SETTINGS CLOUD MANAGER ---
+def load_settings_from_github():
+    try:
+        file_content = repo.get_contents("settings.json")
+        return json.loads(file_content.decoded_content.decode('utf-8'))
+    except Exception:
+        return {}
+
+def save_settings_to_github(settings_dict):
+    settings_json = json.dumps(settings_dict, indent=2)
+    try:
+        file = repo.get_contents("settings.json")
+        repo.update_file(file.path, "Update preferences", settings_json, file.sha)
+    except GithubException as e:
+        if e.status == 404: repo.create_file("settings.json", "Initial settings", settings_json)
+    return True
+
+# --- SESSION STATE INIT (WITH CLOUD SETTINGS) ---
+if "settings_loaded" not in st.session_state:
+    cloud_settings = load_settings_from_github()
+    st.session_state.auto_sync = cloud_settings.get("auto_sync", False)
+    st.session_state.target_lang = cloud_settings.get("target_lang", "Indonesian")
+    st.session_state.ai_model = cloud_settings.get("ai_model", "gemini-2.5-flash-lite")
+    st.session_state.cefr_level = cloud_settings.get("cefr_level", "B2 (Upper Intermediate)")
+    st.session_state.custom_prompt = cloud_settings.get("custom_prompt", "")
+    st.session_state.audio_accent = cloud_settings.get("audio_accent", "com")
+    st.session_state.audio_speed = cloud_settings.get("audio_speed", False)
+    st.session_state.settings_loaded = True
+
+if "gemini_key" not in st.session_state: st.session_state.gemini_key = DEFAULT_GEMINI_KEY
+if "unsaved_changes" not in st.session_state: st.session_state.unsaved_changes = False
+if "deck_name" not in st.session_state: st.session_state.deck_name = "-English Learning::Vocabulary"
+if "deleted_rows_history" not in st.session_state: st.session_state.deleted_rows_history = []
+if "phrase_key" not in st.session_state: st.session_state.phrase_key = 0
+
+if "quiz_active_word" not in st.session_state: st.session_state.quiz_active_word = None
+if "quiz_options" not in st.session_state: st.session_state.quiz_options = []
+if "quiz_answered" not in st.session_state: st.session_state.quiz_answered = False
+if "quiz_correct" not in st.session_state: st.session_state.quiz_correct = False
+
 def trigger_sync():
     if st.session_state.auto_sync:
         try:
@@ -154,12 +161,18 @@ with st.sidebar:
     
     st.divider()
     
-    TARGET_LANG = st.selectbox("🎯 Definition Language", ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"], index=0)
-    GEMINI_MODEL = st.selectbox("🤖 AI Model", ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"], index=0)
+    # Lang & Model logic with saved states
+    lang_opts = ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"]
+    lang_idx = lang_opts.index(st.session_state.target_lang) if st.session_state.target_lang in lang_opts else 0
+    TARGET_LANG = st.selectbox("🎯 Definition Language", lang_opts, index=lang_idx)
     
-    # --- NEW: CEFR LEVEL SLIDER ---
+    model_opts = ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"]
+    model_idx = model_opts.index(st.session_state.ai_model) if st.session_state.ai_model in model_opts else 0
+    GEMINI_MODEL = st.selectbox("🤖 AI Model", model_opts, index=model_idx)
+    
     CEFR_LEVELS = ["A1 (Beginner)", "A2 (Elementary)", "B1 (Intermediate)", "B2 (Upper Intermediate)", "C1 (Advanced)", "C2 (Mastery)"]
-    st.session_state.cefr_level = st.selectbox("📈 Target Difficulty (CEFR)", CEFR_LEVELS, index=CEFR_LEVELS.index(st.session_state.cefr_level))
+    cefr_idx = CEFR_LEVELS.index(st.session_state.cefr_level) if st.session_state.cefr_level in CEFR_LEVELS else 3
+    st.session_state.cefr_level = st.selectbox("📈 Target Difficulty (CEFR)", CEFR_LEVELS, index=cefr_idx)
     
     st.session_state.custom_prompt = st.text_area("🧠 Custom AI Rules (Optional)", value=st.session_state.custom_prompt, placeholder="e.g., Make examples funny, use business context...")
     
@@ -167,10 +180,33 @@ with st.sidebar:
     
     st.header("🔊 Audio Settings")
     accent_map = {"US English": "com", "UK English": "co.uk", "Australian English": "com.au", "Indian English": "co.in"}
-    selected_accent = st.selectbox("Accent", list(accent_map.keys()), index=0)
+    # Reverse lookup for accent
+    current_accent_name = "US English"
+    for k, v in accent_map.items():
+        if v == st.session_state.audio_accent:
+            current_accent_name = k
+            break
+            
+    selected_accent = st.selectbox("Accent", list(accent_map.keys()), index=list(accent_map.keys()).index(current_accent_name))
     st.session_state.audio_accent = accent_map[selected_accent]
     st.session_state.audio_speed = st.checkbox("Slow Audio Generation", value=st.session_state.audio_speed)
     
+    # --- SAVE PREFERENCES BUTTON ---
+    if st.button("💾 Save as Default Settings", type="secondary", use_container_width=True):
+        with st.spinner("Saving preferences to cloud..."):
+            prefs = {
+                "auto_sync": st.session_state.auto_sync,
+                "target_lang": TARGET_LANG,
+                "ai_model": GEMINI_MODEL,
+                "cefr_level": st.session_state.cefr_level,
+                "custom_prompt": st.session_state.custom_prompt,
+                "audio_accent": st.session_state.audio_accent,
+                "audio_speed": st.session_state.audio_speed
+            }
+            save_settings_to_github(prefs)
+            st.success("✅ Settings permanently saved!")
+            time.sleep(1)
+            
     st.divider()
     
     st.subheader("📊 Learning Progress")
