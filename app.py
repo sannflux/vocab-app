@@ -167,7 +167,6 @@ with st.sidebar:
     
     if st.session_state.unsaved_changes:
         st.warning("⚠️ You have unsaved changes locally!")
-        # UPDATED: Replaced use_container_width=True with width="stretch" to fix warnings
         if st.button("☁️ Sync to GitHub", type="primary"):
             with st.spinner("Syncing..."):
                 if save_to_github(st.session_state.vocab_df):
@@ -200,9 +199,18 @@ def cap_first(s: str) -> str:
     s = str(s).strip()
     return s[0].upper() + s[1:] if s else s
 
+# UPDATED: Smart punctuation fixer
 def ensure_trailing_dot(s: str) -> str:
     s = str(s).strip()
-    return s if s and s[-1] in ".!?" else (s + "." if s else "")
+    if not s: 
+        return s
+    # Convert trailing comma to period
+    if s[-1] == ",":
+        return s[:-1] + "."
+    # Add period if no ending punctuation
+    elif s[-1] not in ".!?":
+        return s + "."
+    return s
 
 def normalize_spaces(text: str) -> str:
     return re.sub(r"\s+", " ", str(text)).strip() if text else ""
@@ -573,7 +581,13 @@ with tab1:
         # 3. Save Button
         if st.button("💾 Save Word", type="primary"):
             if v:
-                p = "" if p_raw == "1" else p_raw if p_raw.startswith("*") else p_raw.capitalize()
+                # --- UPDATED: Punctuation applied correctly here ---
+                if p_raw == "1":
+                    p = ""
+                elif p_raw.startswith("*"):
+                    p = p_raw
+                else:
+                    p = ensure_trailing_dot(p_raw.capitalize())
                 
                 if not st.session_state.vocab_df.empty and v in st.session_state.vocab_df['vocab'].values:
                     st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'] == v, ['phrase', 'status']] = [p, 'New']
@@ -603,6 +617,13 @@ with tab1:
                 parts = clean_line.split(',', 1)
                 bv = parts[0].strip().lower()
                 bp = parts[1].strip() if len(parts) > 1 else ""
+                
+                # --- UPDATED: Punctuation applied correctly here ---
+                if bp == "1":
+                    bp = ""
+                elif bp and not bp.startswith("*"):
+                    bp = ensure_trailing_dot(bp.capitalize())
+                    
                 if bv: new_rows.append({"vocab": bv, "phrase": bp, "status": "New", "date_added": get_wib_now()})
             
             if new_rows:
@@ -642,7 +663,6 @@ with tab2:
         if search: display_df = display_df[display_df['vocab'].str.contains(search, case=False)]
         if filter_new: display_df = display_df[display_df['status'] == 'New']
         
-        # MOBILE-FRIENDLY DELETION
         display_df.insert(0, "🗑️ Delete", False)
         
         st.caption("💡 Check the 'Delete' box and click Confirm to remove words (Mobile Friendly!).")
@@ -660,16 +680,11 @@ with tab2:
         )
         
         if st.button("💾 Confirm Edits", type="primary"):
-            
-            # Find rows checked for deletion
             deleted_vocabs_checkbox = set(edited[edited["🗑️ Delete"] == True]["vocab"])
-            
-            # Find rows deleted via keyboard (for desktop users)
             original_vocabs = set(display_df['vocab'])
             edited_vocabs_all = set(edited['vocab'])
             keyboard_deleted = original_vocabs - edited_vocabs_all
             
-            # Combine both deletion methods
             all_deleted_vocabs = deleted_vocabs_checkbox.union(keyboard_deleted)
             
             if all_deleted_vocabs:
@@ -677,7 +692,6 @@ with tab2:
                 st.session_state.deleted_rows_history.append(deleted_df)
                 st.session_state.vocab_df = st.session_state.vocab_df[~st.session_state.vocab_df['vocab'].isin(all_deleted_vocabs)]
             
-            # Process edits for remaining rows
             remaining_edits = edited[edited["🗑️ Delete"] == False]
             for index, row in remaining_edits.iterrows():
                 mask = st.session_state.vocab_df['vocab'] == row['vocab']
