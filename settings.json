@@ -1,0 +1,9 @@
+{
+  "auto_sync": true,
+  "target_lang": "Indonesian",
+  "ai_model": "gemini-2.5-flash-lite",
+  "cefr_level": "B2 (Upper Intermediate)",
+  "custom_prompt": "",
+  "audio_accent": "com",
+  "audio_speed": true
+}
