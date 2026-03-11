@@ -518,15 +518,30 @@ with tab1:
         v = ""
         # 2. Automatically generate the dropdown if a phrase exists
         if p_raw and not p_raw.startswith("*"):
+            # Extract clean words, keep lowercased, remove duplicates but preserve original sentence order
             raw_words = re.findall(r'[^\W\d_]+(?:[-\'][^\W\d_]+)*', p_raw)
             extracted_words = list(dict.fromkeys([w.lower() for w in raw_words]))
             
             if extracted_words:
-                v_choice = st.selectbox("📝 Select Vocab Word from Phrase", options=["(Type manually)"] + extracted_words)
-                if v_choice == "(Type manually)":
-                    v = st.text_input("Type vocab manually").lower().strip()
+                try:
+                    # STREAMLIT >= 1.40 FEATURE: No keyboard popup! Multi-select friendly!
+                    v_choices = st.pills("👉 Tap words to build your Vocab/Phrase:", options=extracted_words, selection_mode="multi")
+                except AttributeError:
+                    # Fallback just in case Streamlit is outdated
+                    v_choices = st.multiselect("👉 Select words to build your Vocab/Phrase:", options=extracted_words)
+                
+                # Re-sort selections so they always maintain their original grammatical order in the sentence
+                if v_choices:
+                    ordered_choices = sorted(v_choices, key=lambda x: extracted_words.index(x))
+                    v_auto = " ".join(ordered_choices)
                 else:
-                    v = v_choice
+                    v_auto = ""
+                
+                v_manual = st.text_input("📝 Or type manually (overrides selection)", placeholder="e.g. holistic way").lower().strip()
+                v = v_manual if v_manual else v_auto
+                
+                if v:
+                    st.info(f"✨ Target Vocab: **{v}**")
         else:
             # Fallback if no phrase is typed yet or user is typing a *hint
             v = st.text_input("📝 Vocab").lower().strip()
@@ -555,7 +570,7 @@ with tab1:
                 time.sleep(1)
                 st.rerun()
             else:
-                st.error("❌ Please provide a vocab word.")
+                st.error("❌ Please select or type a vocab word.")
 
     else:
         st.info("Paste words separated by newlines. Automatically cleans bullets and numbers!")
