@@ -71,11 +71,14 @@ if "audio_speed" not in st.session_state:
     st.session_state.audio_speed = False
 if "custom_prompt" not in st.session_state:
     st.session_state.custom_prompt = ""
+if "auto_sync" not in st.session_state:
+    st.session_state.auto_sync = False
+if "cefr_level" not in st.session_state:
+    st.session_state.cefr_level = "B2 (Upper Intermediate)"
 
 if "phrase_key" not in st.session_state:
     st.session_state.phrase_key = 0
 
-# --- QUIZ STATE INIT ---
 if "quiz_active_word" not in st.session_state:
     st.session_state.quiz_active_word = None
 if "quiz_options" not in st.session_state:
@@ -128,14 +131,35 @@ def save_to_github(dataframe):
     load_data_from_github.clear()
     return True
 
+# --- NEW: AUTO-SYNC HELPER ---
+def trigger_sync():
+    if st.session_state.auto_sync:
+        try:
+            save_to_github(st.session_state.vocab_df)
+            st.session_state.unsaved_changes = False
+            st.toast("☁️ Auto-synced to GitHub!", icon="✅")
+        except Exception as e:
+            st.error(f"Auto-sync failed: {e}")
+            st.session_state.unsaved_changes = True
+    else:
+        st.session_state.unsaved_changes = True
+
 if "vocab_df" not in st.session_state:
     st.session_state.vocab_df = load_data_from_github().copy()
 
 # ========================== SIDEBAR & CONFIG ==========================
 with st.sidebar:
     st.header("⚙️ Settings")
+    st.session_state.auto_sync = st.checkbox("☁️ Auto-Sync to GitHub", value=st.session_state.auto_sync, help="Instantly save changes to the cloud without clicking sync manually.")
+    
+    st.divider()
+    
     TARGET_LANG = st.selectbox("🎯 Definition Language", ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"], index=0)
     GEMINI_MODEL = st.selectbox("🤖 AI Model", ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"], index=0)
+    
+    # --- NEW: CEFR LEVEL SLIDER ---
+    CEFR_LEVELS = ["A1 (Beginner)", "A2 (Elementary)", "B1 (Intermediate)", "B2 (Upper Intermediate)", "C1 (Advanced)", "C2 (Mastery)"]
+    st.session_state.cefr_level = st.selectbox("📈 Target Difficulty (CEFR)", CEFR_LEVELS, index=CEFR_LEVELS.index(st.session_state.cefr_level))
     
     st.session_state.custom_prompt = st.text_area("🧠 Custom AI Rules (Optional)", value=st.session_state.custom_prompt, placeholder="e.g., Make examples funny, use business context...")
     
@@ -288,6 +312,7 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
     total_items = len(vocab_phrase_list)
     
     custom_rule = f"\n5. CUSTOM RULE: {st.session_state.custom_prompt}" if st.session_state.custom_prompt else ""
+    cefr_rule = f"\n6. DIFFICULTY: Tailor the 'definition_english' and 'example_sentences' strictly to a {st.session_state.cefr_level} proficiency level."
 
     for i in range(0, total_items, batch_size):
         progress_bar.progress(i / total_items, text=f"🤖 AI Processing {i}/{total_items} words...")
@@ -299,7 +324,7 @@ RULES:
 1. Copy ALL fields exactly. 
 2. IF 'phrase' starts with '*': Treat it as a CONTEXT HINT. Use this hint to pick the specific definition, but generate a NEW sentence for the final 'phrase' field.
 3. IF 'phrase' is normal text: Define based on that usage.
-4. IF 'phrase' is empty: Generate ONE simple sentence (max 12 words).{custom_rule}
+4. IF 'phrase' is empty: Generate ONE simple sentence (max 12 words).{custom_rule}{cefr_rule}
 NEVER use markdown formatting. Plain text only.
 OUTPUT FORMAT: [{{"vocab": "...", "phrase": "...", "phrase_translation": "{TARGET_LANG} translation of the entire phrase/sentence", "translation": "{TARGET_LANG} meaning of the vocab word itself", "part_of_speech": "...", "pronunciation_ipa": "/.../", "definition_english": "...", "example_sentences": ["..."], "synonyms_antonyms": {{"synonyms": [], "antonyms": []}}, "etymology": "Plain text only."}}]
 BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
@@ -538,7 +563,6 @@ else:
 st.divider()
 
 # ========================== TABS ==========================
-# ADDED NEW TAB: Study Room
 tab1, tab2, tab3, tab4 = st.tabs(["➕ Add", "✏️ Edit / Review", "📇 Generate Anki", "🎮 Study Room"])
 
 with tab1:
@@ -576,7 +600,6 @@ with tab1:
         else:
             v = st.text_input("📝 Vocab").lower().strip()
             
-        # FEATURE 2: Tags Input
         t_raw = st.text_input("🏷️ Tags (Optional)", placeholder="e.g. verb, business, difficult", help="Separate tags with commas")
             
         if v and not st.session_state.vocab_df.empty and v in st.session_state.vocab_df['vocab'].values:
@@ -588,7 +611,6 @@ with tab1:
                 elif p_raw.startswith("*"): p = p_raw
                 else: p = ensure_trailing_dot(p_raw.capitalize())
                 
-                # Clean Tags
                 t_clean = ", ".join([t.strip().lower() for t in t_raw.split(",") if t.strip()]) if t_raw else ""
                 
                 if not st.session_state.vocab_df.empty and v in st.session_state.vocab_df['vocab'].values:
@@ -597,7 +619,7 @@ with tab1:
                     new_row = pd.DataFrame([{"vocab": v, "phrase": p, "tags": t_clean, "status": "New", "date_added": get_wib_now()}])
                     st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, new_row], ignore_index=True)
                 
-                st.session_state.unsaved_changes = True
+                trigger_sync()
                 st.session_state.phrase_key += 1 
                 st.success(f"✅ Saved '{v}'!")
                 time.sleep(1)
@@ -628,8 +650,10 @@ with tab1:
             if new_rows:
                 new_df = pd.DataFrame(new_rows)
                 st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, new_df]).drop_duplicates(subset=['vocab'], keep='last').reset_index(drop=True)
-                st.session_state.unsaved_changes = True
-                st.success(f"✅ Added {len(new_rows)} words! (Locally saved. Don't forget to sync)")
+                trigger_sync()
+                st.success(f"✅ Added {len(new_rows)} words!")
+                time.sleep(1)
+                st.rerun()
 
 with tab2:
     if st.session_state.vocab_df.empty: st.info("Add words first!")
@@ -640,14 +664,14 @@ with tab2:
         with c_sort:
             if st.button("🔤 Sort Alphabetically"):
                 st.session_state.vocab_df = st.session_state.vocab_df.sort_values(by="vocab", ignore_index=True)
-                st.session_state.unsaved_changes = True
+                trigger_sync()
                 st.rerun()
         with c_undo:
             if st.session_state.deleted_rows_history:
                 if st.button(f"↩️ Undo Delete ({len(st.session_state.deleted_rows_history[-1])} words)"):
                     restored_df = st.session_state.deleted_rows_history.pop()
                     st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, restored_df]).drop_duplicates(subset=['vocab'], keep='last').reset_index(drop=True)
-                    st.session_state.unsaved_changes = True
+                    trigger_sync()
                     st.rerun()
             else:
                 st.button("↩️ Undo Delete", disabled=True)
@@ -660,21 +684,19 @@ with tab2:
         
         display_df = st.session_state.vocab_df.copy()
         if search: 
-            # Allow searching by vocab OR tags
             mask = display_df['vocab'].str.contains(search, case=False) | display_df['tags'].str.contains(search, case=False)
             display_df = display_df[mask]
         if filter_new: display_df = display_df[display_df['status'] == 'New']
         
-        # FEATURE 3: BULK STATUS SWITCHER
         with st.expander("⚡ Bulk Actions (Applies to filtered list below)"):
             b1, b2 = st.columns(2)
             if b1.button("Mark all visible as 'New'", use_container_width=True):
                 st.session_state.vocab_df.loc[display_df.index, 'status'] = 'New'
-                st.session_state.unsaved_changes = True
+                trigger_sync()
                 st.rerun()
             if b2.button("Mark all visible as 'Done'", use_container_width=True):
                 st.session_state.vocab_df.loc[display_df.index, 'status'] = 'Done'
-                st.session_state.unsaved_changes = True
+                trigger_sync()
                 st.rerun()
         
         display_df.insert(0, "🗑️ Delete", False)
@@ -711,7 +733,7 @@ with tab2:
                 mask = st.session_state.vocab_df['vocab'] == row['vocab']
                 st.session_state.vocab_df.loc[mask, ['phrase', 'status', 'tags']] = [row['phrase'], row['status'], row['tags']]
             
-            st.session_state.unsaved_changes = True
+            trigger_sync()
             st.toast("✅ Edits confirmed locally!", icon="🎉")
             time.sleep(1)
             st.rerun()
@@ -784,29 +806,24 @@ with tab3:
                     if process_only_new:
                         processed_words = [n['VocabRaw'] for n in raw_notes]
                         st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'].isin(processed_words), 'status'] = 'Done'
-                        st.session_state.unsaved_changes = True
-                        st.caption("✅ Marked successfully processed words as 'Done'. (Don't forget to sync!)")
+                        trigger_sync()
+                        st.caption("✅ Marked successfully processed words as 'Done'.")
 
-# FEATURE 1: IN-APP FLASHCARD QUIZ
 with tab4:
     st.subheader("🎮 Practice & Review")
     
-    # Filter for words that have actual phrases to test with
     valid_pool = st.session_state.vocab_df[(st.session_state.vocab_df['phrase'] != "") & (~st.session_state.vocab_df['phrase'].str.startswith("*"))]
     
     if len(valid_pool) < 4:
         st.info("You need at least 4 saved words (with full phrases) to play the quiz!")
     else:
-        # Generate new question if needed
         if st.session_state.quiz_active_word is None or st.button("⏭️ Next Question", use_container_width=True):
             st.session_state.quiz_answered = False
             st.session_state.quiz_correct = False
-            # Pick a random row
             row = valid_pool.sample(1).iloc[0]
             st.session_state.quiz_active_word = row['vocab']
             st.session_state.quiz_phrase = row['phrase']
             
-            # Generate 3 wrong options
             wrong_pool = valid_pool[valid_pool['vocab'] != st.session_state.quiz_active_word]['vocab'].tolist()
             wrong_options = random.sample(wrong_pool, min(3, len(wrong_pool)))
             options = wrong_options + [st.session_state.quiz_active_word]
@@ -819,16 +836,14 @@ with tab4:
         st.caption("Fill in the blank:")
         st.divider()
 
-        # Display buttons
         col1, col2 = st.columns(2)
         for i, option in enumerate(st.session_state.quiz_options):
             col = col1 if i % 2 == 0 else col2
             
-            # Button color logic based on answer state
             btn_type = "secondary"
             if st.session_state.quiz_answered:
                 if option == st.session_state.quiz_active_word:
-                    btn_type = "primary" # Show correct answer
+                    btn_type = "primary" 
             
             if col.button(option.upper(), key=f"quiz_btn_{i}", use_container_width=True, type=btn_type, disabled=st.session_state.quiz_answered):
                 st.session_state.quiz_answered = True
