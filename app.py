@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from github import Github, GithubException
+from github import Github, GithubException, Auth
 import io
 import random
 from datetime import date, datetime, timezone, timedelta
@@ -24,6 +24,23 @@ except ImportError:
 
 # ========================== SETUP ==========================
 st.set_page_config(page_title="Vocab App", layout="centered", page_icon="📚")
+
+# --- MOBILE KEYBOARD AUTO-DISMISS TRICK ---
+# This invisible JS forces Android/iOS keyboards to close when 'Enter' is pressed
+st.components.v1.html("""
+    <script>
+    const doc = window.parent.document;
+    doc.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            const activeElement = doc.activeElement;
+            if (activeElement && activeElement.tagName === 'INPUT') {
+                setTimeout(function() { activeElement.blur(); }, 50);
+            }
+        }
+    });
+    </script>
+""", height=0, width=0)
+
 st.title("📚 My Cloud Vocab")
 
 # --- SECRETS MANAGEMENT ---
@@ -62,7 +79,9 @@ if "phrase_key" not in st.session_state:
 
 # ========================== GITHUB CONNECT ==========================
 try:
-    g = Github(token)
+    # UPDATED: Fixed deprecation warning for PyGithub login
+    auth = Auth.Token(token)
+    g = Github(auth=auth)
     repo = g.get_repo(repo_name)
 except GithubException as e:
     st.error(f"❌ GitHub connection failed: {e}")
@@ -148,7 +167,8 @@ with st.sidebar:
     
     if st.session_state.unsaved_changes:
         st.warning("⚠️ You have unsaved changes locally!")
-        if st.button("☁️ Sync to GitHub", type="primary", use_container_width=True):
+        # UPDATED: Replaced use_container_width=True with width="stretch" to fix warnings
+        if st.button("☁️ Sync to GitHub", type="primary"):
             with st.spinner("Syncing..."):
                 if save_to_github(st.session_state.vocab_df):
                     st.session_state.unsaved_changes = False
@@ -160,7 +180,7 @@ with st.sidebar:
         
     if not st.session_state.vocab_df.empty:
         csv_full = st.session_state.vocab_df.to_csv(index=False).encode('utf-8')
-        st.download_button("💾 Backup DB", csv_full, f"vocab_backup_{date.today()}.csv", "text/csv", use_container_width=True)
+        st.download_button("💾 Backup DB", csv_full, f"vocab_backup_{date.today()}.csv", "text/csv")
 
 # ========================== GEMINI ==========================
 @st.cache_resource
@@ -551,7 +571,7 @@ with tab1:
             st.warning(f"⚠️ '{v}' is already in your list! Saving will update its phrase and mark it as 'New'.")
 
         # 3. Save Button
-        if st.button("💾 Save Word", use_container_width=True, type="primary"):
+        if st.button("💾 Save Word", type="primary"):
             if v:
                 p = "" if p_raw == "1" else p_raw if p_raw.startswith("*") else p_raw.capitalize()
                 
@@ -598,19 +618,19 @@ with tab2:
         
         c_sort, c_undo = st.columns(2)
         with c_sort:
-            if st.button("🔤 Sort Alphabetically", use_container_width=True):
+            if st.button("🔤 Sort Alphabetically"):
                 st.session_state.vocab_df = st.session_state.vocab_df.sort_values(by="vocab", ignore_index=True)
                 st.session_state.unsaved_changes = True
                 st.rerun()
         with c_undo:
             if st.session_state.deleted_rows_history:
-                if st.button(f"↩️ Undo Delete ({len(st.session_state.deleted_rows_history[-1])} words)", use_container_width=True):
+                if st.button(f"↩️ Undo Delete ({len(st.session_state.deleted_rows_history[-1])} words)"):
                     restored_df = st.session_state.deleted_rows_history.pop()
                     st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, restored_df]).drop_duplicates(subset=['vocab'], keep='last').reset_index(drop=True)
                     st.session_state.unsaved_changes = True
                     st.rerun()
             else:
-                st.button("↩️ Undo Delete", disabled=True, use_container_width=True)
+                st.button("↩️ Undo Delete", disabled=True)
 
         st.divider()
         
@@ -639,7 +659,7 @@ with tab2:
             }
         )
         
-        if st.button("💾 Confirm Edits", type="primary", use_container_width=True):
+        if st.button("💾 Confirm Edits", type="primary"):
             
             # Find rows checked for deletion
             deleted_vocabs_checkbox = set(edited[edited["🗑️ Delete"] == True]["vocab"])
@@ -680,7 +700,7 @@ with tab3:
         else:
             c_test1, c_test2 = st.columns([3,1])
             with c_test1: sandbox_word = st.selectbox("Select a word to test how Gemini defines it:", test_words, label_visibility="collapsed")
-            with c_test2: test_btn = st.button("✨ Generate Test", use_container_width=True)
+            with c_test2: test_btn = st.button("✨ Generate Test")
             
             if test_btn:
                 with st.spinner("Gemini is thinking..."):
@@ -720,7 +740,7 @@ with tab3:
         with c3: process_only_new = st.checkbox("Only process 'New'", value=True)
         with c4: split_deck = st.number_input("Split > X cards (0=No)", min_value=0, value=50, step=10, help="Creates sub-decks natively in Anki.")
 
-        if st.button("🚀 Generate Deck", type="primary", use_container_width=True):
+        if st.button("🚀 Generate Deck", type="primary"):
             subset = st.session_state.vocab_df[st.session_state.vocab_df['status'] == 'New'] if process_only_new else st.session_state.vocab_df
             if subset.empty: st.warning("⚠️ No words to process!")
             else:
@@ -731,7 +751,7 @@ with tab3:
                         apkg_buffer = create_anki_package(raw_notes, st.session_state.deck_name, THEMES[selected_theme], generate_audio=include_audio, max_per_deck=split_deck)
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
                     st.success(f"🎉 {len(raw_notes)} cards ready!")
-                    st.download_button("📥 Download .apkg", apkg_buffer, f"AnkiDeck_{timestamp}.apkg", "application/octet-stream", use_container_width=True)
+                    st.download_button("📥 Download .apkg", apkg_buffer, f"AnkiDeck_{timestamp}.apkg", "application/octet-stream")
                     
                     if process_only_new:
                         processed_words = [n['VocabRaw'] for n in raw_notes]
