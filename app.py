@@ -26,7 +26,6 @@ except ImportError:
 st.set_page_config(page_title="Vocab App", layout="centered", page_icon="📚")
 
 # --- MOBILE KEYBOARD AUTO-DISMISS TRICK ---
-# This invisible JS forces Android/iOS keyboards to close when 'Enter' is pressed
 st.components.v1.html("""
     <script>
     const doc = window.parent.document;
@@ -73,13 +72,21 @@ if "audio_speed" not in st.session_state:
 if "custom_prompt" not in st.session_state:
     st.session_state.custom_prompt = ""
 
-# DYNAMIC KEY FOR SAFE WIDGET CLEARING
 if "phrase_key" not in st.session_state:
     st.session_state.phrase_key = 0
 
+# --- QUIZ STATE INIT ---
+if "quiz_active_word" not in st.session_state:
+    st.session_state.quiz_active_word = None
+if "quiz_options" not in st.session_state:
+    st.session_state.quiz_options = []
+if "quiz_answered" not in st.session_state:
+    st.session_state.quiz_answered = False
+if "quiz_correct" not in st.session_state:
+    st.session_state.quiz_correct = False
+
 # ========================== GITHUB CONNECT ==========================
 try:
-    # UPDATED: Fixed deprecation warning for PyGithub login
     auth = Auth.Token(token)
     g = Github(auth=auth)
     repo = g.get_repo(repo_name)
@@ -95,6 +102,8 @@ def load_data_from_github():
         df = pd.read_csv(io.StringIO(file_content.decoded_content.decode('utf-8')))
         df['phrase'] = df['phrase'].fillna("")
         if 'status' not in df.columns: df['status'] = 'New'
+        if 'tags' not in df.columns: df['tags'] = ""
+        df['tags'] = df['tags'].fillna("")
         
         if 'date_added' not in df.columns:
             df['date_added'] = get_wib_now()
@@ -102,7 +111,7 @@ def load_data_from_github():
         
         return df.sort_values(by="vocab", ignore_index=True)
     except GithubException as e:
-        if e.status == 404: return pd.DataFrame(columns=['vocab', 'phrase', 'status', 'date_added'])
+        if e.status == 404: return pd.DataFrame(columns=['vocab', 'phrase', 'tags', 'status', 'date_added'])
         else: st.error(f"❌ CRITICAL: GitHub Error {e.status}"); st.stop()
     except Exception as e:
         st.error(f"❌ CRITICAL: CSV Error. {e}"); st.stop()
@@ -119,7 +128,6 @@ def save_to_github(dataframe):
     load_data_from_github.clear()
     return True
 
-# Initialize Session State DataFrame
 if "vocab_df" not in st.session_state:
     st.session_state.vocab_df = load_data_from_github().copy()
 
@@ -199,15 +207,12 @@ def cap_first(s: str) -> str:
     s = str(s).strip()
     return s[0].upper() + s[1:] if s else s
 
-# UPDATED: Smart punctuation fixer
 def ensure_trailing_dot(s: str) -> str:
     s = str(s).strip()
     if not s: 
         return s
-    # Convert trailing comma to period
     if s[-1] == ",":
         return s[:-1] + "."
-    # Add period if no ending punctuation
     elif s[-1] not in ".!?":
         return s + "."
     return s
@@ -236,6 +241,12 @@ def fix_vocab_casing(phrase: str, vocab: str) -> str:
     pattern = r'\b' + re.escape(vocab.lower()) + r'\b'
     return re.sub(pattern, vocab, phrase, flags=re.IGNORECASE)
 
+def generate_blanked_phrase(phrase: str, vocab: str) -> str:
+    if not phrase or not vocab: return phrase
+    pattern = r'\b' + re.escape(vocab) + r'\b'
+    blank = "_____"
+    return re.sub(pattern, blank, phrase, flags=re.IGNORECASE)
+
 # ========================== SPEECH & AI HELPERS ==========================
 def speak_word(text: str):
     if not text: return
@@ -260,8 +271,7 @@ def fetch_ai_definition(vocab, phrase, api_key, model_name, target_lang):
 
 # ========================== BATCH GENERATOR ==========================
 def robust_json_parse(text: str):
-    try:
-        return json.loads(text)
+    try: return json.loads(text)
     except Exception: pass
     match = re.search(r'\[.*\]', text, re.DOTALL)
     if match:
@@ -528,7 +538,8 @@ else:
 st.divider()
 
 # ========================== TABS ==========================
-tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit / Review", "📇 Generate Anki"])
+# ADDED NEW TAB: Study Room
+tab1, tab2, tab3, tab4 = st.tabs(["➕ Add", "✏️ Edit / Review", "📇 Generate Anki", "🎮 Study Room"])
 
 with tab1:
     st.subheader("Add new word")
@@ -537,28 +548,20 @@ with tab1:
     if add_mode == "Single":
         st.info("💡 **Smart Add:** Paste your phrase and hit 'Enter/Go' on your keyboard to extract words!")
         
-        # --- THE FIX: DYNAMIC KEY TO FORCE WIDGET RESET ---
         dynamic_key = f"phrase_input_{st.session_state.phrase_key}"
-        
-        # 1. User pastes Phrase FIRST 
         p_raw = st.text_input("🔤 Phrase", key=dynamic_key, placeholder="Paste sentence here and press Enter...", help="Start with '*' to give AI a context hint instead of a sentence (e.g., '*bird')")
         
         v = ""
-        # 2. Automatically generate the dropdown if a phrase exists
         if p_raw and not p_raw.startswith("*"):
-            # Extract clean words, keep lowercased, remove duplicates but preserve original sentence order
             raw_words = re.findall(r'[^\W\d_]+(?:[-\'][^\W\d_]+)*', p_raw)
             extracted_words = list(dict.fromkeys([w.lower() for w in raw_words]))
             
             if extracted_words:
                 try:
-                    # STREAMLIT >= 1.40 FEATURE: No keyboard popup! Multi-select friendly!
                     v_choices = st.pills("👉 Tap words to build your Vocab/Phrase:", options=extracted_words, selection_mode="multi")
                 except AttributeError:
-                    # Fallback just in case Streamlit is outdated
                     v_choices = st.multiselect("👉 Select words to build your Vocab/Phrase:", options=extracted_words)
                 
-                # Re-sort selections so they always maintain their original grammatical order in the sentence
                 if v_choices:
                     ordered_choices = sorted(v_choices, key=lambda x: extracted_words.index(x))
                     v_auto = " ".join(ordered_choices)
@@ -571,35 +574,31 @@ with tab1:
                 if v:
                     st.info(f"✨ Target Vocab: **{v}**")
         else:
-            # Fallback if no phrase is typed yet or user is typing a *hint
             v = st.text_input("📝 Vocab").lower().strip()
             
-        # UI Warning if duplicate
+        # FEATURE 2: Tags Input
+        t_raw = st.text_input("🏷️ Tags (Optional)", placeholder="e.g. verb, business, difficult", help="Separate tags with commas")
+            
         if v and not st.session_state.vocab_df.empty and v in st.session_state.vocab_df['vocab'].values:
             st.warning(f"⚠️ '{v}' is already in your list! Saving will update its phrase and mark it as 'New'.")
 
-        # 3. Save Button
         if st.button("💾 Save Word", type="primary"):
             if v:
-                # --- UPDATED: Punctuation applied correctly here ---
-                if p_raw == "1":
-                    p = ""
-                elif p_raw.startswith("*"):
-                    p = p_raw
-                else:
-                    p = ensure_trailing_dot(p_raw.capitalize())
+                if p_raw == "1": p = ""
+                elif p_raw.startswith("*"): p = p_raw
+                else: p = ensure_trailing_dot(p_raw.capitalize())
+                
+                # Clean Tags
+                t_clean = ", ".join([t.strip().lower() for t in t_raw.split(",") if t.strip()]) if t_raw else ""
                 
                 if not st.session_state.vocab_df.empty and v in st.session_state.vocab_df['vocab'].values:
-                    st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'] == v, ['phrase', 'status']] = [p, 'New']
+                    st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'] == v, ['phrase', 'status', 'tags']] = [p, 'New', t_clean]
                 else:
-                    new_row = pd.DataFrame([{"vocab": v, "phrase": p, "status": "New", "date_added": get_wib_now()}])
+                    new_row = pd.DataFrame([{"vocab": v, "phrase": p, "tags": t_clean, "status": "New", "date_added": get_wib_now()}])
                     st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, new_row], ignore_index=True)
                 
                 st.session_state.unsaved_changes = True
-                
-                # --- THE FIX EXECUTION: ADVANCE THE KEY TO RESET WIDGET ---
                 st.session_state.phrase_key += 1 
-                
                 st.success(f"✅ Saved '{v}'!")
                 time.sleep(1)
                 st.rerun()
@@ -609,22 +608,22 @@ with tab1:
     else:
         st.info("Paste words separated by newlines. Automatically cleans bullets and numbers!")
         bulk_text = st.text_area("Paste List", height=150, placeholder="- cat, The cat sat.\n- dog")
+        bulk_tags = st.text_input("🏷️ Apply Tags to all (Optional)", placeholder="e.g. slang, list1")
         if st.button("💾 Process Bulk List", type="primary"):
             lines = [l.strip() for l in bulk_text.split('\n') if l.strip()]
             new_rows = []
+            b_tags_clean = ", ".join([t.strip().lower() for t in bulk_tags.split(",") if t.strip()]) if bulk_tags else ""
+            
             for line in lines:
                 clean_line = re.sub(r'^[\d\.\-\*\s]+', '', line)
                 parts = clean_line.split(',', 1)
                 bv = parts[0].strip().lower()
                 bp = parts[1].strip() if len(parts) > 1 else ""
                 
-                # --- UPDATED: Punctuation applied correctly here ---
-                if bp == "1":
-                    bp = ""
-                elif bp and not bp.startswith("*"):
-                    bp = ensure_trailing_dot(bp.capitalize())
+                if bp == "1": bp = ""
+                elif bp and not bp.startswith("*"): bp = ensure_trailing_dot(bp.capitalize())
                     
-                if bv: new_rows.append({"vocab": bv, "phrase": bp, "status": "New", "date_added": get_wib_now()})
+                if bv: new_rows.append({"vocab": bv, "phrase": bp, "tags": b_tags_clean, "status": "New", "date_added": get_wib_now()})
             
             if new_rows:
                 new_df = pd.DataFrame(new_rows)
@@ -656,12 +655,27 @@ with tab2:
         st.divider()
         
         c1, c2 = st.columns([2, 1])
-        with c1: search = st.text_input("🔎 Search...", "").lower().strip()
+        with c1: search = st.text_input("🔎 Search / Filter Tags...", "").lower().strip()
         with c2: filter_new = st.checkbox("Show 'New' only")
         
         display_df = st.session_state.vocab_df.copy()
-        if search: display_df = display_df[display_df['vocab'].str.contains(search, case=False)]
+        if search: 
+            # Allow searching by vocab OR tags
+            mask = display_df['vocab'].str.contains(search, case=False) | display_df['tags'].str.contains(search, case=False)
+            display_df = display_df[mask]
         if filter_new: display_df = display_df[display_df['status'] == 'New']
+        
+        # FEATURE 3: BULK STATUS SWITCHER
+        with st.expander("⚡ Bulk Actions (Applies to filtered list below)"):
+            b1, b2 = st.columns(2)
+            if b1.button("Mark all visible as 'New'", use_container_width=True):
+                st.session_state.vocab_df.loc[display_df.index, 'status'] = 'New'
+                st.session_state.unsaved_changes = True
+                st.rerun()
+            if b2.button("Mark all visible as 'Done'", use_container_width=True):
+                st.session_state.vocab_df.loc[display_df.index, 'status'] = 'Done'
+                st.session_state.unsaved_changes = True
+                st.rerun()
         
         display_df.insert(0, "🗑️ Delete", False)
         
@@ -674,7 +688,8 @@ with tab2:
             hide_index=True, 
             column_config={
                 "status": st.column_config.SelectboxColumn("Status", options=["New", "Done"], required=True), 
-                "date_added": st.column_config.TextColumn("Date Added (WIB)", disabled=True),
+                "date_added": st.column_config.TextColumn("Date Added", disabled=True),
+                "tags": st.column_config.TextColumn("Tags"),
                 "🗑️ Delete": st.column_config.CheckboxColumn("🗑️ Delete", default=False)
             }
         )
@@ -684,7 +699,6 @@ with tab2:
             original_vocabs = set(display_df['vocab'])
             edited_vocabs_all = set(edited['vocab'])
             keyboard_deleted = original_vocabs - edited_vocabs_all
-            
             all_deleted_vocabs = deleted_vocabs_checkbox.union(keyboard_deleted)
             
             if all_deleted_vocabs:
@@ -695,7 +709,7 @@ with tab2:
             remaining_edits = edited[edited["🗑️ Delete"] == False]
             for index, row in remaining_edits.iterrows():
                 mask = st.session_state.vocab_df['vocab'] == row['vocab']
-                st.session_state.vocab_df.loc[mask, ['phrase', 'status']] = [row['phrase'], row['status']]
+                st.session_state.vocab_df.loc[mask, ['phrase', 'status', 'tags']] = [row['phrase'], row['status'], row['tags']]
             
             st.session_state.unsaved_changes = True
             st.toast("✅ Edits confirmed locally!", icon="🎉")
@@ -772,3 +786,59 @@ with tab3:
                         st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'].isin(processed_words), 'status'] = 'Done'
                         st.session_state.unsaved_changes = True
                         st.caption("✅ Marked successfully processed words as 'Done'. (Don't forget to sync!)")
+
+# FEATURE 1: IN-APP FLASHCARD QUIZ
+with tab4:
+    st.subheader("🎮 Practice & Review")
+    
+    # Filter for words that have actual phrases to test with
+    valid_pool = st.session_state.vocab_df[(st.session_state.vocab_df['phrase'] != "") & (~st.session_state.vocab_df['phrase'].str.startswith("*"))]
+    
+    if len(valid_pool) < 4:
+        st.info("You need at least 4 saved words (with full phrases) to play the quiz!")
+    else:
+        # Generate new question if needed
+        if st.session_state.quiz_active_word is None or st.button("⏭️ Next Question", use_container_width=True):
+            st.session_state.quiz_answered = False
+            st.session_state.quiz_correct = False
+            # Pick a random row
+            row = valid_pool.sample(1).iloc[0]
+            st.session_state.quiz_active_word = row['vocab']
+            st.session_state.quiz_phrase = row['phrase']
+            
+            # Generate 3 wrong options
+            wrong_pool = valid_pool[valid_pool['vocab'] != st.session_state.quiz_active_word]['vocab'].tolist()
+            wrong_options = random.sample(wrong_pool, min(3, len(wrong_pool)))
+            options = wrong_options + [st.session_state.quiz_active_word]
+            random.shuffle(options)
+            st.session_state.quiz_options = options
+            st.rerun()
+            
+        st.divider()
+        st.markdown(f"### {generate_blanked_phrase(st.session_state.quiz_phrase, st.session_state.quiz_active_word)}")
+        st.caption("Fill in the blank:")
+        st.divider()
+
+        # Display buttons
+        col1, col2 = st.columns(2)
+        for i, option in enumerate(st.session_state.quiz_options):
+            col = col1 if i % 2 == 0 else col2
+            
+            # Button color logic based on answer state
+            btn_type = "secondary"
+            if st.session_state.quiz_answered:
+                if option == st.session_state.quiz_active_word:
+                    btn_type = "primary" # Show correct answer
+            
+            if col.button(option.upper(), key=f"quiz_btn_{i}", use_container_width=True, type=btn_type, disabled=st.session_state.quiz_answered):
+                st.session_state.quiz_answered = True
+                if option == st.session_state.quiz_active_word:
+                    st.session_state.quiz_correct = True
+                st.rerun()
+        
+        if st.session_state.quiz_answered:
+            if st.session_state.quiz_correct:
+                st.success(f"🎉 Correct! The word is **{st.session_state.quiz_active_word}**.")
+                st.balloons()
+            else:
+                st.error(f"❌ Incorrect. The correct word was **{st.session_state.quiz_active_word}**.")
