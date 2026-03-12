@@ -23,7 +23,7 @@ except ImportError:
     st.stop()
 
 # ========================== SETUP ==========================
-st.set_page_config(page_title="Vocab App", layout="wide", page_icon="📚")
+st.set_page_config(page_title="Vocab Architect v2", layout="wide", page_icon="📚")
 
 # --- JS FOR KEYBOARD & AUTO-AUDIO ---
 st.components.v1.html("""
@@ -116,7 +116,7 @@ def save_settings_to_github(settings_dict):
         if e.status == 404: repo.create_file("settings.json", "Initial settings", settings_json)
     return True
 
-# --- SESSION STATE INIT ---
+# ========================== SESSION STATE INIT ==========================
 if "settings_loaded" not in st.session_state:
     cloud_settings = load_settings_from_github()
     st.session_state.auto_sync = cloud_settings.get("auto_sync", False)
@@ -133,18 +133,21 @@ if "unsaved_changes" not in st.session_state: st.session_state.unsaved_changes =
 if "deck_name" not in st.session_state: st.session_state.deck_name = "-English Learning::Vocabulary"
 if "deleted_rows_history" not in st.session_state: st.session_state.deleted_rows_history = []
 if "phrase_key" not in st.session_state: st.session_state.phrase_key = 0
+if "processed_notes_cache" not in st.session_state: st.session_state.processed_notes_cache = {}
 
+# Quiz State
 if "quiz_active_row" not in st.session_state: st.session_state.quiz_active_row = None
 if "quiz_options" not in st.session_state: st.session_state.quiz_options = []
 if "quiz_answered" not in st.session_state: st.session_state.quiz_answered = False
 if "quiz_correct" not in st.session_state: st.session_state.quiz_correct = False
+if "quiz_streak" not in st.session_state: st.session_state.quiz_streak = 0
 
 def trigger_sync():
     if st.session_state.auto_sync:
         try:
             save_to_github(st.session_state.vocab_df)
             st.session_state.unsaved_changes = False
-            st.toast("☁️ Auto-synced!", icon="✅")
+            st.toast("☁️ Auto-synced to Cloud!", icon="✅")
         except Exception: st.session_state.unsaved_changes = True
     else: st.session_state.unsaved_changes = True
 
@@ -169,12 +172,23 @@ with st.sidebar:
     sel_accent_name = st.selectbox("Accent", list(accent_map.keys()), index=list(accent_map.keys()).index(rev_accent.get(st.session_state.audio_accent, "US English")))
     st.session_state.audio_accent = accent_map[sel_accent_name]
     st.session_state.audio_speed = st.checkbox("Slow Audio", value=st.session_state.audio_speed)
-    if st.button("💾 Save as Default", use_container_width=True):
-        save_settings_to_github({"auto_sync": st.session_state.auto_sync, "target_lang": TARGET_LANG, "ai_model": GEMINI_MODEL, "cefr_level": st.session_state.cefr_level, "custom_prompt": st.session_state.custom_prompt, "audio_accent": st.session_state.audio_accent, "audio_speed": st.session_state.audio_speed})
-        st.success("Saved!")
+    
+    if st.button("💾 Save Settings", use_container_width=True):
+        save_settings_to_github({
+            "auto_sync": st.session_state.auto_sync, 
+            "target_lang": TARGET_LANG, 
+            "ai_model": GEMINI_MODEL, 
+            "cefr_level": st.session_state.cefr_level, 
+            "custom_prompt": st.session_state.custom_prompt, 
+            "audio_accent": st.session_state.audio_accent, 
+            "audio_speed": st.session_state.audio_speed
+        })
+        st.success("Preferences Saved!")
+    
     st.divider()
     if st.session_state.unsaved_changes:
-        if st.button("☁️ Sync to GitHub", type="primary"):
+        st.warning("You have unsaved changes.")
+        if st.button("☁️ Push to GitHub", type="primary", use_container_width=True):
             if save_to_github(st.session_state.vocab_df): 
                 st.session_state.unsaved_changes = False
                 st.rerun()
@@ -187,7 +201,7 @@ def get_gemini_model(api_key: str, model_name: str):
         return genai.GenerativeModel(model_name, generation_config={"response_mime_type": "application/json", "temperature": 0.1})
     except Exception: return None
 
-# ========================== CLEANING ==========================
+# ========================== CLEANING & HELPERS ==========================
 def cap_first(s: str) -> str: return s[0].upper() + s[1:] if s else s
 def ensure_trailing_dot(s: str) -> str:
     s = str(s).strip()
@@ -196,7 +210,6 @@ def ensure_trailing_dot(s: str) -> str:
     elif s[-1] not in ".!?": return s + "."
     return s
 
-def normalize_spaces(text: str) -> str: return re.sub(r"\s+", " ", str(text)).strip() if text else ""
 def highlight_vocab(text: str, vocab: str) -> str:
     pattern = r'\b' + re.escape(vocab) + r'\b'
     return re.sub(pattern, f'<b><u>{vocab}</u></b>', text, flags=re.IGNORECASE)
@@ -205,7 +218,6 @@ def generate_blanked_phrase(phrase: str, vocab: str) -> str:
     pattern = r'\b' + re.escape(vocab) + r'\b'
     return re.sub(pattern, "_____", phrase, flags=re.IGNORECASE)
 
-# ========================== SPEECH & AI HELPERS ==========================
 def speak_word(text: str):
     if not text: return
     safe_text = text.replace('"', '\\"').replace("'", "\\'")
@@ -242,16 +254,16 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
     custom_rule = f"\n5. CUSTOM RULE: {st.session_state.custom_prompt}" if st.session_state.custom_prompt else ""
     cefr_rule = f"\n6. DIFFICULTY: Use {st.session_state.cefr_level} vocabulary only."
 
-    total_items = len(vocab_phrase_list)
-    if total_items == 0: return []
-
-    for i in range(0, total_items, batch_size):
+    for i in range(0, len(vocab_phrase_list), batch_size):
         batch = vocab_phrase_list[i:i + batch_size]
-        batch_dicts = [{"vocab": v[0], "phrase": v[1]} for v in batch]
-        
+        # Filter out items already in cache to save tokens
+        needed_batch = [v for v in batch if v[0] not in st.session_state.processed_notes_cache]
+        if not needed_batch: continue
+
+        batch_dicts = [{"vocab": v[0], "phrase": v[1]} for v in needed_batch]
         prompt = f"""You are an expert lexicographer. Output ONLY a JSON array.
 RULES:
-1. IF 'phrase' is provided: Identify the EXACT Part of Speech and contextual meaning of the 'vocab'.
+1. IF 'phrase' is provided: Identify EXACT Part of Speech and contextual meaning of 'vocab'.
 2. IF 'phrase' is empty: Provide most common dictionary definition.
 3. IF 'phrase' starts with '*': Treat as a context hint.{custom_rule}{cefr_rule}
 FORMAT: [{{"vocab": "...", "phrase": "...", "phrase_translation": "{TARGET_LANG} sentence meaning", "translation": "{TARGET_LANG} vocab meaning", "part_of_speech": "...", "pronunciation_ipa": "/.../", "definition_english": "...", "example_sentences": ["..."], "synonyms_antonyms": {{"synonyms": [], "antonyms": []}}, "etymology": "text"}}]
@@ -266,19 +278,43 @@ INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
                     break
             except Exception: 
                 time.sleep(1)
-        else: continue 
     return all_card_data
 
 def process_anki_data(df_subset, batch_size=6):
-    vocab_phrase_list = df_subset[['vocab', 'phrase']].values.tolist()
-    all_card_data = generate_anki_card_data_batched(vocab_phrase_list, batch_size=batch_size)
-    processed_notes = []
-    for card_data in all_card_data:
-        vocab_raw = str(card_data.get("vocab", "")).strip().lower()
-        phrase = ensure_trailing_dot(card_data.get("phrase", ""))
-        text_field = f"{highlight_vocab(phrase, vocab_raw)}<br><br>{cap_first(vocab_raw)}: <b>{{{{c1::{ensure_trailing_dot(card_data.get('translation', '?'))}}}}}</b>" if phrase else f"{cap_first(vocab_raw)}: <b>{{{{c1::{ensure_trailing_dot(card_data.get('translation', '?'))}}}}}</b>"
-        processed_notes.append({"VocabRaw": vocab_raw, "Text": text_field, "PhraseTranslation": ensure_trailing_dot(card_data.get("phrase_translation", "")), "Pronunciation": f"<b>[{str(card_data.get('part_of_speech', '')).title()}]</b> {card_data.get('pronunciation_ipa', '')}", "Definition": ensure_trailing_dot(card_data.get("definition_english", "")), "Examples": "<ul>" + "".join(f"<li><i>{ensure_trailing_dot(e)}</i></li>" for e in card_data.get("example_sentences", [])[:3]) + "</ul>", "Synonyms": ", ".join(card_data.get("synonyms_antonyms", {}).get("synonyms", [])[:5]), "Antonyms": ", ".join(card_data.get("synonyms_antonyms", {}).get("antonyms", [])[:5]), "Etymology": card_data.get("etymology", "")})
-    return processed_notes
+    """Processes notes using a cache-first approach."""
+    notes_to_return = []
+    needed_for_ai = []
+
+    for _, row in df_subset.iterrows():
+        v = row['vocab'].strip().lower()
+        if v in st.session_state.processed_notes_cache:
+            notes_to_return.append(st.session_state.processed_notes_cache[v])
+        else:
+            needed_for_ai.append((v, row['phrase']))
+
+    if needed_for_ai:
+        ai_results = generate_anki_card_data_batched(needed_for_ai, batch_size)
+        for card_data in ai_results:
+            vocab_raw = str(card_data.get("vocab", "")).strip().lower()
+            phrase = ensure_trailing_dot(card_data.get("phrase", ""))
+            
+            text_field = f"{highlight_vocab(phrase, vocab_raw)}<br><br>{cap_first(vocab_raw)}: <b>{{{{c1::{ensure_trailing_dot(card_data.get('translation', '?'))}}}}}</b>" if phrase else f"{cap_first(vocab_raw)}: <b>{{{{c1::{ensure_trailing_dot(card_data.get('translation', '?'))}}}}}</b>"
+            
+            note = {
+                "VocabRaw": vocab_raw, 
+                "Text": text_field, 
+                "PhraseTranslation": ensure_trailing_dot(card_data.get("phrase_translation", "")), 
+                "Pronunciation": f"<b>[{str(card_data.get('part_of_speech', '')).title()}]</b> {card_data.get('pronunciation_ipa', '')}", 
+                "Definition": ensure_trailing_dot(card_data.get("definition_english", "")), 
+                "Examples": "<ul>" + "".join(f"<li><i>{ensure_trailing_dot(e)}</i></li>" for e in card_data.get("example_sentences", [])[:3]) + "</ul>", 
+                "Synonyms": ", ".join(card_data.get("synonyms_antonyms", {}).get("synonyms", [])[:5]), 
+                "Antonyms": ", ".join(card_data.get("synonyms_antonyms", {}).get("antonyms", [])[:5]), 
+                "Etymology": card_data.get("etymology", "")
+            }
+            st.session_state.processed_notes_cache[vocab_raw] = note
+            notes_to_return.append(note)
+            
+    return notes_to_return
 
 # ========================== ANKI PACKAGE ==========================
 THEMES = {
@@ -312,9 +348,11 @@ def create_anki_package(notes_data, deck_name, css_theme, generate_audio=True, m
                 for f in concurrent.futures.as_completed(futures):
                     v, fname, fpath = f.result()
                     if fname: media.append(fpath); audio_map[v] = f"[sound:{fname}]"
+        
         decks = []
         if max_per_deck > 0 and len(notes_data) > max_per_deck:
-            for idx, chunk in enumerate([notes_data[i:i + max_per_deck] for i in range(0, len(notes_data), max_per_deck)]):
+            chunks = [notes_data[i:i + max_per_deck] for i in range(0, len(notes_data), max_per_deck)]
+            for idx, chunk in enumerate(chunks):
                 d = genanki.Deck(2059400110 + idx, f"{deck_name}::Part {idx+1}")
                 for n in chunk: d.add_note(genanki.Note(model=my_model, fields=[n['Text'], n['PhraseTranslation'], n['Pronunciation'], n['Definition'], n['Examples'], n['Synonyms'], n['Antonyms'], n['Etymology'], audio_map.get(n['VocabRaw'], "")]))
                 decks.append(d)
@@ -322,6 +360,7 @@ def create_anki_package(notes_data, deck_name, css_theme, generate_audio=True, m
             d = genanki.Deck(2059400110, deck_name)
             for n in notes_data: d.add_note(genanki.Note(model=my_model, fields=[n['Text'], n['PhraseTranslation'], n['Pronunciation'], n['Definition'], n['Examples'], n['Synonyms'], n['Antonyms'], n['Etymology'], audio_map.get(n['VocabRaw'], "")]))
             decks.append(d)
+        
         pkg = genanki.Package(decks); pkg.media_files = media
         buf = io.BytesIO(); out = os.path.join(tmp, 'out.apkg'); pkg.write_to_file(out)
         with open(out, "rb") as f: buf.write(f.read())
@@ -335,7 +374,7 @@ def generate_audio_file(v, tmp, accent, slow):
         return v, f, p
     except Exception: return v, None, None
 
-# ========================== UI ==========================
+# ========================== UI COMPONENTS ==========================
 st.divider()
 st.header("🌟 Word of the Day")
 if not st.session_state.vocab_df.empty:
@@ -346,7 +385,7 @@ if not st.session_state.vocab_df.empty:
     c1, c2 = st.columns([1,4])
     if c1.button("🔊 Pronounce"): speak_word(row_wotd["vocab"])
     if c2.button("✨ AI Define"):
-        with st.spinner("..."): 
+        with st.spinner("Analyzing..."): 
             st.info(fetch_ai_definition(row_wotd["vocab"], row_wotd["phrase"], st.session_state.gemini_key, GEMINI_MODEL, TARGET_LANG))
 
 st.divider()
@@ -357,149 +396,204 @@ with tab1:
     mode = st.radio("Mode", ["Single", "Bulk"], horizontal=True, label_visibility="collapsed")
     if mode == "Single":
         dynamic_key = f"p_{st.session_state.phrase_key}"
-        p_raw = st.text_input("🔤 Phrase", key=dynamic_key, placeholder="Paste and hit Enter...")
+        p_raw = st.text_input("🔤 Phrase", key=dynamic_key, placeholder="Paste a sentence containing the word...")
         v = ""
         if p_raw and not p_raw.startswith("*"):
             words = list(dict.fromkeys([w.lower() for w in re.findall(r'[^\W\d_]+(?:[-\'][^\W\d_]+)*', p_raw)]))
             if words:
-                v_choices = st.pills("👉 Tap words:", options=words, selection_mode="multi")
+                v_choices = st.pills("👉 Tap target word(s):", options=words, selection_mode="multi")
                 v = " ".join(sorted(v_choices, key=lambda x: words.index(x))) if v_choices else ""
-                v_manual = st.text_input("📝 Manual override").lower().strip()
+                v_manual = st.text_input("📝 Manual Vocab (Override)").lower().strip()
                 v = v_manual if v_manual else v
-                if v: st.info(f"Target: **{v}**")
-        else: v = st.text_input("📝 Vocab").lower().strip()
-        t_raw = st.text_input("🏷️ Tags")
+        else: 
+            v = st.text_input("📝 Vocab").lower().strip()
+        
+        if v in st.session_state.vocab_df['vocab'].values:
+            st.warning(f"⚠️ '{v}' already exists in your list.")
+            
+        t_raw = st.text_input("🏷️ Tags (comma separated)")
         if st.button("💾 Save Word", type="primary", use_container_width=True):
             if v:
                 p = "" if p_raw == "1" else p_raw if p_raw.startswith("*") else ensure_trailing_dot(p_raw.capitalize())
-                t = ", ".join([x.strip().lower() for x in t_raw.split(",") if x.strip()])
+                t = ", ".join(sorted([x.strip().lower() for x in t_raw.split(",") if x.strip()]))
+                
+                # Update logic
                 if v in st.session_state.vocab_df['vocab'].values: 
                     st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'] == v, ['phrase', 'status', 'tags']] = [p, 'New', t]
                 else: 
                     st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, pd.DataFrame([{"vocab": v, "phrase": p, "tags": t, "status": "New", "date_added": get_wib_now()}])], ignore_index=True)
-                trigger_sync(); st.session_state.phrase_key += 1; st.success(f"Saved {v}!"); time.sleep(1); st.rerun()
+                
+                trigger_sync()
+                st.session_state.phrase_key += 1
+                st.success(f"Saved: {v}")
+                time.sleep(0.5)
+                st.rerun()
     else:
-        bulk_text = st.text_area("Paste List (vocab, phrase)")
-        bulk_tags = st.text_input("Apply tags to all")
+        bulk_text = st.text_area("Paste List (format: vocab, phrase OR vocab)", help="One per line. Commas separate vocab from phrase.")
+        bulk_tags = st.text_input("Apply tags to all entries")
         if st.button("💾 Process Bulk", type="primary", use_container_width=True):
             new_rows = []
             for line in [l.strip() for l in bulk_text.split('\n') if l.strip()]:
-                parts = re.sub(r'^[\d\.\-\*\s]+', '', line).split(',', 1)
+                # Advanced cleanup for numbered lists or bullets
+                clean_line = re.sub(r'^[\d\.\-\*\s•]+', '', line)
+                parts = clean_line.split(',', 1)
                 bv = parts[0].strip().lower()
                 bp = parts[1].strip() if len(parts) > 1 else ""
                 bp = "" if bp == "1" else ensure_trailing_dot(bp.capitalize()) if bp and not bp.startswith("*") else bp
-                if bv: new_rows.append({"vocab": bv, "phrase": bp, "tags": bulk_tags, "status": "New", "date_added": get_wib_now()})
+                if bv: 
+                    new_rows.append({"vocab": bv, "phrase": bp, "tags": bulk_tags.lower(), "status": "New", "date_added": get_wib_now()})
             if new_rows: 
                 st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, pd.DataFrame(new_rows)]).drop_duplicates(subset=['vocab'], keep='last').reset_index(drop=True)
-                trigger_sync(); st.success("Added!"); time.sleep(1); st.rerun()
+                trigger_sync()
+                st.success(f"Successfully processed {len(new_rows)} words.")
+                st.rerun()
 
 with tab2:
-    if st.session_state.vocab_df.empty: st.info("Empty")
+    if st.session_state.vocab_df.empty: 
+        st.info("No words found. Start adding some!")
     else:
-        c_sort, c_undo = st.columns(2)
-        if c_sort.button("🔤 Sort"): 
+        col_s, col_u, col_c = st.columns([1, 1, 2])
+        if col_s.button("🔤 Sort A-Z"): 
             st.session_state.vocab_df = st.session_state.vocab_df.sort_values(by="vocab", ignore_index=True)
             trigger_sync(); st.rerun()
-        if c_undo.button("↩️ Undo", disabled=not st.session_state.deleted_rows_history): 
+        if col_u.button("↩️ Undo Delete", disabled=not st.session_state.deleted_rows_history): 
             st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, st.session_state.deleted_rows_history.pop()]).reset_index(drop=True)
             trigger_sync(); st.rerun()
-        search = st.text_input("🔎 Search/Tags").lower().strip()
+            
+        search = st.text_input("🔎 Filter by word or tag").lower().strip()
         disp = st.session_state.vocab_df.copy()
-        if search: disp = disp[disp['vocab'].str.contains(search) | disp['tags'].str.contains(search)]
+        if search: 
+            disp = disp[disp['vocab'].str.contains(search) | disp['tags'].str.contains(search)]
+        
         disp.insert(0, "🗑️", False)
-        edited = st.data_editor(disp, num_rows="dynamic", use_container_width=True, hide_index=True, column_config={"🗑️": st.column_config.CheckboxColumn(default=False)})
-        if st.button("💾 Confirm Edits", type="primary", use_container_width=True):
+        edited = st.data_editor(
+            disp, 
+            num_rows="dynamic", 
+            use_container_width=True, 
+            hide_index=True, 
+            column_config={
+                "🗑️": st.column_config.CheckboxColumn(label="Del", default=False),
+                "status": st.column_config.SelectboxColumn(options=["New", "Done", "Skip"]),
+                "date_added": st.column_config.TextColumn(disabled=True)
+            }
+        )
+        
+        if st.button("💾 Apply Changes", type="primary", use_container_width=True):
             deleted = set(edited[edited["🗑️"] == True]["vocab"])
             if deleted: 
                 st.session_state.deleted_rows_history.append(st.session_state.vocab_df[st.session_state.vocab_df['vocab'].isin(deleted)].copy())
                 st.session_state.vocab_df = st.session_state.vocab_df[~st.session_state.vocab_df['vocab'].isin(deleted)]
+            
+            # Map edits back to session state
             for _, r in edited[edited["🗑️"] == False].iterrows(): 
                 st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'] == r['vocab'], ['phrase', 'status', 'tags']] = [r['phrase'], r['status'], r['tags']]
-            trigger_sync(); st.success("Updated!"); time.sleep(1); st.rerun()
+            
+            trigger_sync()
+            st.success("Database Updated!")
+            st.rerun()
 
 with tab3:
     st.subheader("Generate Anki")
     if not st.session_state.vocab_df.empty:
+        # Extract unique tags for filtering
+        all_tags = set()
+        for t_str in st.session_state.vocab_df['tags'].unique():
+            if t_str: all_tags.update([x.strip() for x in t_str.split(',')])
+        
+        sel_tags = st.multiselect("Filter by Tags (Optional)", options=sorted(list(all_tags)))
         st.session_state.deck_name = st.text_input("Deck Name", value=st.session_state.deck_name)
+        
         c1, c2, c3 = st.columns(3)
-        only_new = c1.checkbox("Only New", True); inc_audio = c2.checkbox("Audio", True); splt = c3.number_input("Split >", 0, 500, 50)
-        if st.button("🚀 Build Deck", type="primary", use_container_width=True):
-            sub = st.session_state.vocab_df[st.session_state.vocab_df['status'] == 'New'] if only_new else st.session_state.vocab_df
+        only_new = c1.checkbox("Unprocessed (Status: New) only", True)
+        inc_audio = c2.checkbox("Include AI Audio", True)
+        splt = c3.number_input("Split deck if more than X cards", 0, 500, 50)
+        
+        if st.button("🚀 Build & Download Deck", type="primary", use_container_width=True):
+            sub = st.session_state.vocab_df.copy()
+            if only_new: sub = sub[sub['status'] == 'New']
+            if sel_tags: sub = sub[sub['tags'].apply(lambda x: any(t in x for t in sel_tags))]
+            
             if not sub.empty:
-                notes = process_anki_data(sub)
+                with st.spinner(f"AI is preparing {len(sub)} cards..."):
+                    notes = process_anki_data(sub)
+                
                 if notes:
                     buf = create_anki_package(notes, st.session_state.deck_name, THEMES["Minimalist Light"], inc_audio, splt)
-                    st.download_button("📥 Download", buf, "deck.apkg", use_container_width=True)
+                    st.download_button("📥 Download .apkg", buf, "vocab_deck.apkg", use_container_width=True)
                     if only_new: 
                         st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'].isin([n['VocabRaw'] for n in notes]), 'status'] = 'Done'
                         trigger_sync()
-                else: st.warning("AI failed to generate data. Try again.")
+                else: 
+                    st.error("AI failed to generate data. Check your API key.")
+            else:
+                st.warning("No words found matching these filters.")
 
 with tab4:
     st.subheader("🎮 Study Room")
     # Filters words that have a phrase (required for the cloze quiz)
-    valid_quiz = st.session_state.vocab_df[st.session_state.vocab_df['phrase'] != ""]
+    valid_quiz_pool = st.session_state.vocab_df[st.session_state.vocab_df['phrase'] != ""]
     
-    if len(valid_quiz) < 4: 
-        st.info("Need at least 4 words with phrases to start a quiz.")
+    if len(valid_quiz_pool) < 4: 
+        st.info("You need at least 4 words with phrases to start a quiz.")
     else:
-        game_mode = st.selectbox("🎮 Quiz Mode", ["Phrase (Fill-in-blank)", "Definition (Meanings)"], index=0)
+        game_mode = st.selectbox("🎮 Quiz Mode", ["Phrase (Cloze)", "Definition (Meaning)"])
         
         # NEXT QUESTION LOGIC
         if st.session_state.quiz_active_row is None or st.button("⏭️ Next Question", use_container_width=True):
             st.session_state.quiz_answered = False
             st.session_state.quiz_correct = False
             
-            # Select a random row
-            quiz_row = valid_quiz.sample(1).iloc[0]
+            # Select random word
+            quiz_row = valid_quiz_pool.sample(1).iloc[0]
             
-            # Fetch data via AI (with error handling for IndexError)
-            with st.spinner("🤖 AI is preparing the question..."):
+            # Use cached processing
+            with st.spinner("🤖 Retrieving knowledge..."):
                 processed_list = process_anki_data(pd.DataFrame([quiz_row]), 1)
                 
                 if processed_list:
                     st.session_state.quiz_active_row = processed_list[0]
                     # Generate options
-                    wrong = valid_quiz[valid_quiz['vocab'] != quiz_row['vocab']]['vocab'].sample(min(3, len(valid_quiz)-1)).tolist()
+                    wrong = valid_quiz_pool[valid_quiz_pool['vocab'] != quiz_row['vocab']]['vocab'].sample(min(3, len(valid_quiz_pool)-1)).tolist()
                     st.session_state.quiz_options = random.sample(wrong + [st.session_state.quiz_active_row['VocabRaw']], 4)
                     st.rerun()
                 else:
-                    st.error("AI was unable to process this word. Please click Next again.")
+                    st.error("Error processing question. Try again.")
 
         # DISPLAY QUESTION
         if st.session_state.quiz_active_row:
             q = st.session_state.quiz_active_row
+            st.write(f"🔥 Streak: **{st.session_state.quiz_streak}**")
             
-            if game_mode == "Phrase (Fill-in-blank)":
-                # Extract the phrase part from the Text field (it contains HTML)
+            if game_mode == "Phrase (Cloze)":
+                # HTML cleanup for display
                 display_q = generate_blanked_phrase(q['Text'].split('<br>')[0], q['VocabRaw'])
                 st.markdown(f"### {display_q}")
             else:
-                st.info(f"📜 {q['Definition']}")
+                st.info(f"📜 Definition: {q['Definition']}")
             
             # UI BUTTONS
             cols = st.columns(2)
             for i, opt in enumerate(st.session_state.quiz_options):
-                # Highlight correct answer if already answered
                 b_type = "primary" if st.session_state.quiz_answered and opt == q['VocabRaw'] else "secondary"
                 
                 if cols[i%2].button(opt.upper(), key=f"quiz_opt_{i}", use_container_width=True, type=b_type, disabled=st.session_state.quiz_answered):
                     st.session_state.quiz_answered = True
                     if opt == q['VocabRaw']:
                         st.session_state.quiz_correct = True
+                        st.session_state.quiz_streak += 1
                         speak_word(opt)
+                    else:
+                        st.session_state.quiz_streak = 0
                     st.rerun()
             
             if st.session_state.quiz_answered:
                 if st.session_state.quiz_correct: 
                     st.success("Correct!")
-                    st.balloons()
                 else: 
-                    st.error(f"Not quite! The answer was: **{q['VocabRaw']}**")
+                    st.error(f"Incorrect. The answer was: **{q['VocabRaw']}**")
                 
-                # Show context details after answering
-                with st.expander("📖 View Details", expanded=True):
+                with st.expander("📖 View Full Details", expanded=True):
                     st.write(f"**Meaning:** {q['Definition']}")
                     st.write(f"**Translation:** {q['PhraseTranslation']}")
+                    st.write(f"**Etymology:** {q['Etymology']}")
                     st.write(f"**Pronunciation:** {q['Pronunciation']}")
-
