@@ -37,6 +37,11 @@ except KeyError as e:
 if "gemini_key" not in st.session_state:
     st.session_state.gemini_key = DEFAULT_GEMINI_KEY
 
+if "deck_ready" not in st.session_state:
+    st.session_state.deck_ready = False
+    st.session_state.apkg_buffer = None
+    st.session_state.apkg_filename = ""
+
 # ========================== SIDEBAR & CONFIG ==========================
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -130,13 +135,13 @@ def speak_word(text: str, lang: str = "en-US"):
 def robust_json_parse(text: str):
     try:
         return json.loads(text)
-    except:
+    except Exception:
         pass
     match = re.search(r'\[.*\]', text, re.DOTALL)
     if match:
         try:
             return json.loads(match.group(0))
-        except:
+        except Exception:
             pass
     return None
 
@@ -152,7 +157,6 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
     for i in range(0, total_items, batch_size):
         progress_bar.progress(i / total_items, text=f"🤖 AI Processing {i}/{total_items} words...")
         batch = vocab_phrase_list[i:i + batch_size]
-        # batch is list of tuples: (vocab, phrase)
         batch_dicts = [{"vocab": v[0], "phrase": v[1]} for v in batch]
 
         prompt = f"""You are an expert lexicographer. Output ONLY a JSON array.
@@ -323,14 +327,23 @@ def load_data():
     try:
         file_content = repo.get_contents("vocabulary.csv")
         df = pd.read_csv(io.StringIO(file_content.decoded_content.decode('utf-8')))
-        df['phrase'] = df['phrase'].fillna("")
-        if 'status' not in df.columns: df['status'] = 'New'
-        return df.sort_values(by="vocab", ignore_index=True)
     except GithubException as e:
-        if e.status == 404: return pd.DataFrame(columns=['vocab', 'phrase', 'status'])
-        else: st.error(f"❌ CRITICAL: GitHub Error {e.status}"); st.stop()
+        if e.status == 404: 
+            df = pd.DataFrame(columns=['vocab', 'phrase', 'status'])
+        else: 
+            st.error(f"❌ CRITICAL: GitHub Error {e.status}")
+            st.stop()
     except Exception as e:
-        st.error(f"❌ CRITICAL: CSV Error. {e}"); st.stop()
+        st.error(f"❌ CRITICAL: CSV Error. {e}")
+        st.stop()
+    
+    # Enforce strict column structure
+    for col in ['vocab', 'phrase', 'status']:
+        if col not in df.columns:
+            df[col] = 'New' if col == 'status' else ""
+            
+    df['phrase'] = df['phrase'].fillna("")
+    return df.sort_values(by="vocab", ignore_index=True)
 
 def save_to_github(dataframe):
     dataframe = dataframe[dataframe['vocab'].astype(str).str.strip().str.len() > 0]
@@ -340,34 +353,41 @@ def save_to_github(dataframe):
         file = repo.get_contents("vocabulary.csv")
         repo.update_file(file.path, "Updated vocab", csv_data, file.sha)
     except GithubException as e:
-        if e.status == 404: repo.create_file("vocabulary.csv", "Initial commit", csv_data)
+        if e.status == 404: 
+            repo.create_file("vocabulary.csv", "Initial commit", csv_data)
+    
     load_data.clear()
+    st.session_state.df = dataframe.copy() # Sync session state
     return True
 
-df = load_data().copy()
+# Initialize Session State DataFrame securely
+if "df" not in st.session_state:
+    st.session_state.df = load_data().copy()
 
 # ========================== WORD OF THE DAY & DOWNLOAD ==========================
 with st.sidebar:
     st.divider()
     # NEW: Database Backup Button
-    if not df.empty:
-        csv_full = df.to_csv(index=False).encode('utf-8')
+    if not st.session_state.df.empty:
+        csv_full = st.session_state.df.to_csv(index=False).encode('utf-8')
         st.download_button("💾 Backup Database (CSV)", csv_full, f"vocab_backup_{date.today()}.csv", "text/csv")
     
     st.divider()
     st.header("🌟 Word of the Day")
-    if not df.empty:
+    if not st.session_state.df.empty:
         today_str = date.today().isoformat()
         random.seed(today_str)
         try:
-            row = df.sample(n=1).iloc[0]
+            row = st.session_state.df.sample(n=1).iloc[0]
             wotd_vocab = row["vocab"]
             wotd_phrase = row["phrase"]
             st.subheader(wotd_vocab.upper())
             if wotd_phrase: st.caption(wotd_phrase)
             if st.button("🔊 Pronounce"): speak_word(wotd_vocab)
-        except: pass
-    else: st.info("No words yet!")
+        except Exception: 
+            pass
+    else: 
+        st.info("No words yet!")
 
 # ========================== TABS ==========================
 tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit / Review", "📇 Generate Anki"])
@@ -386,11 +406,17 @@ with tab1:
 
         if submitted and v:
             p = "" if p_raw == "1" else p_raw if p_raw.startswith("*") else p_raw.capitalize()
-            if not df.empty and v in df['vocab'].values:
-                df.loc[df['vocab'] == v, 'phrase'] = p; df.loc[df['vocab'] == v, 'status'] = 'New'
+            current_df = st.session_state.df.copy()
+            if not current_df.empty and v in current_df['vocab'].values:
+                current_df.loc[current_df['vocab'] == v, 'phrase'] = p
+                current_df.loc[current_df['vocab'] == v, 'status'] = 'New'
             else:
-                df = pd.concat([df, pd.DataFrame([{"vocab": v, "phrase": p, "status": "New"}])], ignore_index=True)
-            if save_to_github(df): st.success(f"✅ Saved '{v}'!"); time.sleep(1); st.rerun()
+                current_df = pd.concat([current_df, pd.DataFrame([{"vocab": v, "phrase": p, "status": "New"}])], ignore_index=True)
+            
+            if save_to_github(current_df): 
+                st.success(f"✅ Saved '{v}'!")
+                time.sleep(1)
+                st.rerun()
 
     else: # NEW: Bulk Add Logic
         st.info("Paste words separated by newlines. Optional: add comma for phrase. Example:\n`cat, The cat sat.`\n`dog`")
@@ -402,41 +428,51 @@ with tab1:
                 parts = line.split(',', 1)
                 bv = parts[0].strip().lower()
                 bp = parts[1].strip() if len(parts) > 1 else ""
-                if bv: new_rows.append({"vocab": bv, "phrase": bp, "status": "New"})
+                if bv: 
+                    new_rows.append({"vocab": bv, "phrase": bp, "status": "New"})
             
             if new_rows:
-                # Merge logic to avoid duplicates
+                current_df = st.session_state.df.copy()
                 new_df = pd.DataFrame(new_rows)
-                df = pd.concat([df, new_df]).drop_duplicates(subset=['vocab'], keep='last')
-                if save_to_github(df): st.success(f"✅ Added {len(new_rows)} words!"); time.sleep(1); st.rerun()
+                current_df = pd.concat([current_df, new_df]).drop_duplicates(subset=['vocab'], keep='last')
+                if save_to_github(current_df): 
+                    st.success(f"✅ Added {len(new_rows)} words!")
+                    time.sleep(1)
+                    st.rerun()
 
 with tab2:
-    if df.empty: st.info("Add words first!")
+    if st.session_state.df.empty: 
+        st.info("Add words first!")
     else:
-        st.subheader(f"✏️ Edit List ({len(df)} words)")
+        st.subheader(f"✏️ Edit List ({len(st.session_state.df)} words)")
         c1, c2 = st.columns([2, 1])
         with c1: search = st.text_input("🔎 Search...", "").lower().strip()
         with c2: filter_new = st.checkbox("Show 'New' only")
         
-        display_df = df.copy()
-        if search: display_df = display_df[display_df['vocab'].str.contains(search, case=False)]
-        if filter_new: display_df = display_df[display_df['status'] == 'New']
+        display_df = st.session_state.df.copy()
+        if search: 
+            display_df = display_df[display_df['vocab'].str.contains(search, case=False)]
+        if filter_new: 
+            display_df = display_df[display_df['status'] == 'New']
         
         edited = st.data_editor(display_df, num_rows="dynamic", use_container_width=True, hide_index=True, column_config={"status": st.column_config.SelectboxColumn("Status", options=["New", "Done"], required=True)})
         
         if st.button("💾 Save Changes", type="primary", use_container_width=True):
-            if search or filter_new:
-                for index, row in edited.iterrows():
-                    mask = df['vocab'] == row['vocab']
-                    df.loc[mask, ['phrase', 'status']] = [row['phrase'], row['status']]
-                final_save = df
-            else: final_save = edited
-            if save_to_github(final_save.sort_values(by="vocab", ignore_index=True)): st.toast("✅ Cloud updated!", icon="🎉"); st.rerun()
+            current_df = st.session_state.df.copy()
+            
+            # Vectorized update using the vocab column as index
+            current_df.set_index('vocab', inplace=True)
+            edited_indexed = edited.set_index('vocab')
+            current_df.update(edited_indexed)
+            current_df.reset_index(inplace=True)
+            
+            if save_to_github(current_df.sort_values(by="vocab", ignore_index=True)): 
+                st.toast("✅ Cloud updated!", icon="🎉")
+                st.rerun()
 
 with tab3:
     st.subheader("📇 Generate Cyberpunk Anki Deck")
     
-    # NEW: Live Preview Expander
     with st.expander("👁️ Preview Card Style"):
         st.markdown(f"<style>{CYBERPUNK_CSS}</style>", unsafe_allow_html=True)
         preview_html = """
@@ -452,11 +488,13 @@ with tab3:
         """
         st.markdown(preview_html, unsafe_allow_html=True)
 
-    if df.empty: st.info("Add words first!")
+    if st.session_state.df.empty: 
+        st.info("Add words first!")
     else:
+        current_df = st.session_state.df.copy()
         col_new, col_all = st.columns(2)
-        col_new.metric("New Words", len(df[df['status'] == 'New']))
-        col_all.metric("Total Words", len(df))
+        col_new.metric("New Words", len(current_df[current_df['status'] == 'New']))
+        col_all.metric("Total Words", len(current_df))
         st.divider()
         
         deck_name_input = st.text_input("📦 Deck Name", value="-English Learning::Vocabulary")
@@ -466,18 +504,34 @@ with tab3:
         with c3: process_only_new = st.checkbox("Only process 'New'", value=True)
 
         if st.button("🚀 Generate Deck", type="primary", use_container_width=True):
-            subset = df[df['status'] == 'New'] if process_only_new else df
-            if subset.empty: st.warning("⚠️ No words to process!")
+            subset = current_df[current_df['status'] == 'New'] if process_only_new else current_df
+            if subset.empty: 
+                st.warning("⚠️ No words to process!")
             else:
                 raw_notes = process_anki_data(subset, batch_size=batch_size)
-                if not raw_notes: st.error("❌ Generation failed. Check API Key.")
+                if not raw_notes: 
+                    st.error("❌ Generation failed. Check API Key.")
                 else:
                     with st.spinner("📦 Packaging Deck..."):
                         apkg_buffer = create_anki_package(raw_notes, deck_name_input, generate_audio=include_audio)
+                    
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-                    st.success(f"🎉 {len(raw_notes)} cards ready!")
-                    st.download_button("📥 Download .apkg", apkg_buffer, f"AnkiDeck_{timestamp}.apkg", "application/octet-stream", use_container_width=True)
+                    st.session_state.apkg_buffer = apkg_buffer.getvalue()
+                    st.session_state.apkg_filename = f"AnkiDeck_{timestamp}.apkg"
+                    st.session_state.deck_ready = True
+                    
                     if process_only_new:
-                        df.loc[df['vocab'].isin(subset['vocab']), 'status'] = 'Done'
-                        save_to_github(df)
+                        current_df.loc[current_df['vocab'].isin(subset['vocab']), 'status'] = 'Done'
+                        save_to_github(current_df)
                         st.caption("✅ Marked processed words as 'Done' in cloud.")
+
+        # Conditionally render the download button safely outside the processing block
+        if st.session_state.deck_ready and st.session_state.apkg_buffer:
+            st.success("🎉 Cards ready for download!")
+            st.download_button(
+                label="📥 Download .apkg", 
+                data=st.session_state.apkg_buffer, 
+                file_name=st.session_state.apkg_filename, 
+                mime="application/octet-stream", 
+                use_container_width=True
+            )
