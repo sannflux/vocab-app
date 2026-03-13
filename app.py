@@ -139,6 +139,10 @@ if "quiz_options" not in st.session_state: st.session_state.quiz_options = []
 if "quiz_answered" not in st.session_state: st.session_state.quiz_answered = False
 if "quiz_correct" not in st.session_state: st.session_state.quiz_correct = False
 
+# State for Anki Deck Generation to prevent rerun issues
+if "deck_buffer" not in st.session_state: st.session_state.deck_buffer = None
+if "deck_notes" not in st.session_state: st.session_state.deck_notes = None
+
 def trigger_sync():
     if st.session_state.auto_sync:
         try:
@@ -221,7 +225,6 @@ def fetch_ai_definition(vocab, phrase, api_key, model_name, target_lang):
     prompt = f'Provide a 1-sentence {target_lang} translation and short English definition for "{vocab}" in context of: "{phrase}". JSON format: {{"translation": "...", "definition": "..."}}'
     try:
         res = model.generate_content(prompt).text
-        # Stripping potential markdown wrapping
         clean_res = re.sub(r'```(?:json)?\n?(.*?)\n?```', r'\1', res, flags=re.DOTALL).strip()
         data = json.loads(clean_res)
         return f"**{target_lang}:** {data.get('translation', '')} \n\n **Def:** {data.get('definition', '')}"
@@ -229,7 +232,6 @@ def fetch_ai_definition(vocab, phrase, api_key, model_name, target_lang):
 
 # ========================== BATCH GENERATOR ==========================
 def robust_json_parse(text: str):
-    # Aggressively strip markdown code blocks that Gemini frequently returns
     clean_text = re.sub(r'```(?:json)?\n?(.*?)\n?```', r'\1', text, flags=re.DOTALL).strip()
     try: return json.loads(clean_text)
     except Exception: pass
@@ -269,7 +271,7 @@ INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
             try:
                 response = model.generate_content(prompt)
                 parsed = robust_json_parse(response.text)
-                if isinstance(parsed, list): 
+                if isinstance(parsed, list) and len(parsed) > 0: 
                     all_card_data.extend(parsed)
                     break
             except Exception: 
@@ -450,7 +452,6 @@ with tab3:
         if st.button("🚀 Build Deck", type="primary", use_container_width=True):
             sub = st.session_state.vocab_df[st.session_state.vocab_df['status'] == 'New'] if only_new else st.session_state.vocab_df
             if not sub.empty:
-                # Progress UI Elements
                 status_text = st.empty()
                 prog_bar = st.progress(0)
                 
@@ -458,15 +459,29 @@ with tab3:
                 
                 if notes:
                     buf = create_anki_package(notes, st.session_state.deck_name, THEMES["Minimalist Light"], inc_audio, splt, progress_bar=prog_bar, status_text=status_text)
-                    st.download_button("📥 Download Deck", buf, "deck.apkg", use_container_width=True, type="primary")
-                    if only_new: 
-                        st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'].isin([n['VocabRaw'] for n in notes]), 'status'] = 'Done'
-                        trigger_sync()
-                    st.success("Deck generated successfully!")
+                    # Save successful generation to session state
+                    st.session_state.deck_buffer = buf
+                    st.session_state.deck_notes = notes
+                    st.success("Deck generated successfully! You can now download it below.")
                 else: 
                     st.warning("AI failed to generate data. Check the format or try again.")
                     status_text.empty()
                     prog_bar.empty()
+                    st.session_state.deck_buffer = None
+            else:
+                st.info("No words to process based on your current filters.")
+
+        # Download button exists OUTSIDE the if st.button block
+        if st.session_state.deck_buffer is not None:
+            st.download_button("📥 Download Deck", st.session_state.deck_buffer, "deck.apkg", use_container_width=True, type="primary")
+            
+            # Optional: Button to mark as done and clear buffer after successful generation
+            if only_new and st.button("✅ Mark words as Done", use_container_width=True):
+                st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'].isin([n['VocabRaw'] for n in st.session_state.deck_notes]), 'status'] = 'Done'
+                st.session_state.deck_buffer = None
+                st.session_state.deck_notes = None
+                trigger_sync()
+                st.rerun()
 
 with tab4:
     st.subheader("🎮 Study Room")
@@ -497,7 +512,6 @@ with tab4:
             q = st.session_state.quiz_active_row
             
             if game_mode == "Phrase (Fill-in-blank)":
-                # Safer HTML parsing approach
                 raw_text = q.get('Text', '')
                 phrase_part = raw_text.split('<br>')[0] if '<br>' in raw_text else raw_text
                 display_q = generate_blanked_phrase(phrase_part, q['VocabRaw'])
