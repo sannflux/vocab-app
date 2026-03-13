@@ -372,7 +372,6 @@ if "vocab_df" not in st.session_state:
 # ========================== WORD OF THE DAY & DOWNLOAD ==========================
 with st.sidebar:
     st.divider()
-    # Database Backup Button uses the live session state
     if not st.session_state.vocab_df.empty:
         csv_full = st.session_state.vocab_df.to_csv(index=False).encode('utf-8')
         st.download_button("💾 Backup Database (CSV)", csv_full, f"vocab_backup_{date.today()}.csv", "text/csv")
@@ -401,28 +400,62 @@ with tab1:
     add_mode = st.radio("Mode", ["Single", "Bulk"], horizontal=True, label_visibility="collapsed")
     
     if add_mode == "Single":
-        # Retained st.form for flawless Android "Enter" key submission
-        with st.form("add_form", clear_on_submit=True):
-            v = st.text_input("📝 Vocab", placeholder="e.g. serendipity").lower().strip()
-            p_raw = st.text_input("🔤 Phrase", placeholder="I found it by serendipity! (or type '1' to skip)").strip()
-            submitted = st.form_submit_button("💾 Save to Cloud", use_container_width=True)
-
-        if submitted and v:
-            p = "" if p_raw == "1" else p_raw if p_raw.startswith("*") else p_raw.capitalize()
+        # 1. Phrase Input (Top)
+        p_raw = st.text_input("🔤 Phrase", placeholder="Paste your sentence here...")
+        
+        # 2. Extract words dynamically into pills or inline buttons
+        v_selected = ""
+        if p_raw and p_raw != "1" and not p_raw.startswith("*"):
+            clean_text = re.sub(r'[^\w\s\-\']', '', p_raw)
+            unique_words = list(dict.fromkeys([w.lower() for w in clean_text.split() if w.strip()]))
             
-            # Update Session State instantly
-            if not st.session_state.vocab_df.empty and v in st.session_state.vocab_df['vocab'].values:
-                st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'] == v, 'phrase'] = p
-                st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'] == v, 'status'] = 'New'
+            if unique_words:
+                st.caption("Click words below to extract them as vocabulary:")
+                try:
+                    # Streamlit 1.37+ native pills (Selection Mode: Multi)
+                    selected_words = st.pills("Select Vocab", unique_words, selection_mode="multi", label_visibility="collapsed")
+                    v_selected = " ".join(selected_words) if selected_words else ""
+                except AttributeError:
+                    # Fallback for older Streamlit: Inline checkboxes using columns
+                    selected_words = []
+                    cols = st.columns(min(len(unique_words), 6))
+                    for i, w in enumerate(unique_words):
+                        if cols[i % len(cols)].checkbox(w, key=f"chk_{w}"):
+                            selected_words.append(w)
+                    v_selected = " ".join(selected_words) if selected_words else ""
+        
+        # 3. Vocab Input (Auto-filled by selection above, or typed manually)
+        v = st.text_input("📝 Vocab", value=v_selected, placeholder="e.g. serendipity").lower().strip()
+        
+        # 4. Save Button & Logic
+        if st.button("💾 Save to Cloud", type="primary", use_container_width=True):
+            if v:
+                p = p_raw.strip()
+                
+                # Auto-Punctuation Logic
+                if p and p != "1" and not p.startswith("*"):
+                    if p.endswith(","):
+                        p = p[:-1] + "."
+                    elif not p.endswith((".", "!", "?")):
+                        p += "."
+                    p = p.capitalize()
+                elif p == "1":
+                    p = ""
+                
+                # State Update & Save
+                if not st.session_state.vocab_df.empty and v in st.session_state.vocab_df['vocab'].values:
+                    st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'] == v, 'phrase'] = p
+                    st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'] == v, 'status'] = 'New'
+                else:
+                    new_row = pd.DataFrame([{"vocab": v, "phrase": p, "status": "New"}])
+                    st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, new_row], ignore_index=True)
+                
+                save_to_github(st.session_state.vocab_df)
+                st.success(f"✅ Saved '{v}'!")
+                time.sleep(0.5)
+                st.rerun()
             else:
-                new_row = pd.DataFrame([{"vocab": v, "phrase": p, "status": "New"}])
-                st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, new_row], ignore_index=True)
-            
-            # Background Sync
-            save_to_github(st.session_state.vocab_df)
-            st.success(f"✅ Saved '{v}'!")
-            time.sleep(0.5)
-            st.rerun()
+                st.error("⚠️ Please select or type a vocabulary word before saving.")
 
     else: 
         st.info("Paste words separated by newlines. Optional: add comma for phrase. Example:\n`cat, The cat sat.`\n`dog`")
@@ -434,6 +467,14 @@ with tab1:
                 parts = line.split(',', 1)
                 bv = parts[0].strip().lower()
                 bp = parts[1].strip() if len(parts) > 1 else ""
+                
+                # Bulk Auto-Punctuation Logic
+                if bp and bp != "1" and not bp.startswith("*"):
+                    if bp.endswith(","): bp = bp[:-1] + "."
+                    elif not bp.endswith((".", "!", "?")): bp += "."
+                    bp = bp.capitalize()
+                elif bp == "1": bp = ""
+
                 if bv: new_rows.append({"vocab": bv, "phrase": bp, "status": "New"})
             
             if new_rows:
