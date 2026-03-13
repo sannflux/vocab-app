@@ -338,29 +338,16 @@ tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit / Review", "📇 Generate An
 
 with tab1:
     st.subheader("Add new word")
-    add_mode = st.radio("Mode", ["Single", "Bulk"], horizontal=True, label_visibility="collapsed")
+    add_mode = st.radio("Mode", ["Single", "Bulk", "Extract"], horizontal=True, label_visibility="collapsed")
     
     if add_mode == "Single":
-        # Removed st.form to allow real-time extraction
-        p_raw = st.text_area("🔤 Phrase / Context (Paste sentence here first)", placeholder="I found it by serendipity! (or type '1' to skip)", height=100).strip()
-        
-        # Auto-extraction logic triggered instantly as user types/pastes
-        extracted_words = []
-        if p_raw and p_raw != "1" and not p_raw.startswith("*"):
-            raw_words = re.findall(r'\b[A-Za-z\-]{3,}\b', p_raw.lower())
-            extracted_words = sorted(list(set(raw_words)))
-        
-        selected_extract = "-- Type manually below --"
-        if extracted_words:
-            st.caption("✨ Detected Words (Select one to auto-fill)")
-            selected_extract = st.selectbox("Extract", ["-- Type manually below --"] + extracted_words, label_visibility="collapsed")
-        
-        v_manual = st.text_input("📝 Vocab", placeholder="e.g. serendipity").lower().strip()
-        
-        # Determine final vocabulary word
-        v = selected_extract if selected_extract != "-- Type manually below --" else v_manual
+        # Restored st.form and st.text_input so Android "Enter" key submits properly
+        with st.form("add_form", clear_on_submit=True):
+            v = st.text_input("📝 Vocab", placeholder="e.g. serendipity").lower().strip()
+            p_raw = st.text_input("🔤 Phrase", placeholder="I found it by serendipity! (or type '1' to skip)").strip()
+            submitted = st.form_submit_button("💾 Save to Cloud", use_container_width=True)
 
-        if st.button("💾 Save to Cloud", use_container_width=True, type="primary"):
+        if submitted:
             if v:
                 p = "" if p_raw == "1" else p_raw if p_raw.startswith("*") else p_raw.capitalize()
                 st.session_state.vocab_df = merge_new_words(st.session_state.vocab_df, [{"vocab": v, "phrase": p}])
@@ -386,6 +373,27 @@ with tab1:
                 save_to_github(st.session_state.vocab_df)
                 st.success(f"✅ Added {len(new_rows)} words!")
                 time.sleep(0.5); st.rerun()
+                
+    elif add_mode == "Extract":
+        st.info("Paste an article or paragraph. We'll extract words so you can quickly select which ones to learn.")
+        article_text = st.text_area("Paste Text Here", height=150)
+        if article_text:
+            sentences = re.split(r'(?<=[.!?])\s+', article_text.replace('\n', ' '))
+            raw_words = re.findall(r'\b[A-Za-z\-]{3,}\b', article_text.lower())
+            unique_words = sorted(list(set(raw_words)))
+            
+            selected_words = st.multiselect("Select words to add:", unique_words)
+            if st.button("💾 Add Selected Words", type="primary"):
+                new_rows = []
+                for w in selected_words:
+                    context = next((s for s in sentences if re.search(r'\b' + re.escape(w) + r'\b', s, re.IGNORECASE)), "")
+                    new_rows.append({"vocab": w, "phrase": context})
+                
+                if new_rows:
+                    st.session_state.vocab_df = merge_new_words(st.session_state.vocab_df, new_rows)
+                    save_to_github(st.session_state.vocab_df)
+                    st.success(f"✅ Extracted and added {len(new_rows)} words!")
+                    time.sleep(1); st.rerun()
 
 with tab2:
     if st.session_state.vocab_df.empty: st.info("Add words first!")
