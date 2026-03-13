@@ -136,50 +136,61 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
     all_card_data = []
     total_items = len(vocab_phrase_list)
     batches = [vocab_phrase_list[i:i + batch_size] for i in range(0, total_items, batch_size)]
-    completed_items = 0
+    
+    # RPD (Requests Per Day) Monitor
+    if "rpd_count" not in st.session_state:
+        st.session_state.rpd_count = 0
 
-    def fetch_batch(batch):
-        batch_dicts = [{"vocab": v[0], "phrase": v[1]} for v in batch]
-        prompt = f"""You are an expert lexicographer. Output ONLY a JSON array.
+    with st.status("🤖 Processing AI Batches (RPM Throttled)...", expanded=True) as status_log:
+        progress_bar = st.progress(0)
+        
+        for idx, batch in enumerate(batches):
+            if st.session_state.rpd_count >= 20:
+                st.warning("🛑 Daily AI Limit (20 requests) reached. Please try again tomorrow.")
+                break
+            
+            # RPM (Requests Per Minute) Throttle: If not the first batch, wait to avoid 5 RPM limit
+            if idx > 0:
+                for remaining in range(12, 0, -1):
+                    progress_bar.progress(idx / len(batches), text=f"⏳ Throttling for RPM limits... ({remaining}s)")
+                    time.sleep(1)
+
+            batch_dicts = [{"vocab": v[0], "phrase": v[1]} for v in batch]
+            prompt = f"""You are an expert lexicographer. Output ONLY a JSON array.
 RULES: 
 1. Copy ALL fields exactly. 
 2. IF 'phrase' starts with '*': Treat it as a CONTEXT HINT.
 3. IF 'phrase' is normal text: Define based on that usage.
 4. IF 'phrase' is empty: Generate ONE simple sentence (max 12 words).
 5. EXACT vocab unchanged.
-NEVER use markdown, asterisks, bold, italic, or any formatting. Plain text only.
 OUTPUT FORMAT: [{{"vocab": "...", "phrase": "...", "translation": "{TARGET_LANG} meaning", "part_of_speech": "...", "pronunciation_ipa": "/.../", "definition_english": "...", "example_sentences": ["..."], "synonyms_antonyms": {{"synonyms": [], "antonyms": []}}, "etymology": "Plain text only."}}]
 BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
 
-        vocab_words = [v[0] for v in batch]
-        for attempt in range(4):
-            try:
-                response = model.generate_content(prompt)
-                parsed = robust_json_parse(response.text)
-                if isinstance(parsed, list): return parsed, vocab_words, attempt
-            except Exception as e: time.sleep((2 ** attempt) + 1)
-        return [], vocab_words, 4 
+            vocab_words = [v[0] for v in batch]
+            success = False
+            for attempt in range(3):
+                try:
+                    response = model.generate_content(prompt)
+                    st.session_state.rpd_count += 1 # Increment Day Counter
+                    parsed = robust_json_parse(response.text)
+                    if isinstance(parsed, list):
+                        all_card_data.extend(parsed)
+                        st.markdown(f"✅ **Processed**: `{', '.join(vocab_words)}`")
+                        success = True
+                        break
+                except Exception as e:
+                    if "429" in str(e): # Rate limit error
+                        time.sleep(20)
+                    else:
+                        time.sleep(2)
+            
+            if not success:
+                st.markdown(f"❌ **Failed**: `{', '.join(vocab_words)}` (Skipping to preserve quota)")
+            
+            progress_bar.progress((idx + 1) / len(batches))
 
-    with st.status("🤖 Initializing AI threads...", expanded=True) as status_log:
-        progress_bar = st.progress(0, text="Starting batch processing...")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            future_to_batch = {executor.submit(fetch_batch, b): b for b in batches}
-            for future in concurrent.futures.as_completed(future_to_batch):
-                batch = future_to_batch[future]
-                result, words, attempts = future.result()
-                words_str = ", ".join(words)
-                if result:
-                    all_card_data.extend(result)
-                    if attempts == 0: st.markdown(f"✅ **Processed**: `{words_str}`")
-                    else: st.markdown(f"⚠️ **Recovered** *(Retry {attempts})*: `{words_str}`")
-                else: st.markdown(f"❌ **Failed** *(Max Retries)*: `{words_str}`")
-                completed_items += len(batch)
-                progress_pct = min(completed_items / total_items, 1.0)
-                progress_bar.progress(progress_pct, text=f"🤖 Processing {completed_items}/{total_items} words...")
-
-        status_log.update(label=f"✅ AI Generation Complete! ({completed_items} words)", state="complete", expanded=False)
-        time.sleep(0.5)
-
+        status_log.update(label=f"✅ AI Generation Complete! ({len(all_card_data)} items)", state="complete", expanded=False)
+    
     return all_card_data
 
 def process_anki_data(df_subset, batch_size=6):
@@ -285,52 +296,39 @@ def save_to_github(dataframe):
 
 if "vocab_df" not in st.session_state: st.session_state.vocab_df = load_data().copy()
 
-# ========================== SIDEBAR ==========================
-with st.sidebar:
-    st.header("⚙️ Settings")
-    TARGET_LANG = st.selectbox("🎯 Definition Language", ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"], index=0)
-    GEMINI_MODEL = st.selectbox("🤖 AI Model", ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"], index=0)
-    st.divider()
-    if not st.session_state.vocab_df.empty:
-        st.download_button("💾 Backup Database (CSV)", st.session_state.vocab_df.to_csv(index=False).encode('utf-8'), f"vocab_backup_{date.today()}.csv", "text/csv")
-    st.header("🌟 Word of the Day")
-    if not st.session_state.vocab_df.empty:
-        random.seed(date.today().isoformat())
-        row = st.session_state.vocab_df.sample(n=1).iloc[0]
-        st.subheader(row["vocab"].upper()); st.caption(row["phrase"])
-        if st.button("🔊 Pronounce"): speak_word(row["vocab"])
-
 # ========================== CALLBACK LOGIC FOR INSTANT CLEAR ==========================
 def save_single_word_callback():
     v = st.session_state.input_vocab.lower().strip()
     p_raw = st.session_state.input_phrase
-    
     if v:
         p = p_raw.strip()
         if p and p != "1" and not p.startswith("*"):
             if p.endswith(","): p = p[:-1] + "."
             elif not p.endswith((".", "!", "?")): p += "."
             p = p.capitalize()
-        
-        # Update Data
         mask = st.session_state.vocab_df['vocab'] == v
         if not st.session_state.vocab_df.empty and mask.any():
             st.session_state.vocab_df.loc[mask, ['phrase', 'status']] = [p, 'New']
         else:
             st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, pd.DataFrame([{"vocab": v, "phrase": p, "status": "New"}])], ignore_index=True)
-        
         save_to_github(st.session_state.vocab_df)
-        
-        # INSTANT CLEAR MAGIC: Setting these session states instantly empties the inputs on next render
-        st.session_state.input_phrase = ""
-        st.session_state.input_vocab = ""
+        st.session_state.input_phrase = ""; st.session_state.input_vocab = ""
         st.session_state.save_message = f"✅ Saved '{v}'!"
-    else:
-        st.session_state.save_error = "⚠️ Enter a vocabulary word."
+    else: st.session_state.save_error = "⚠️ Enter a vocabulary word."
 
-# Initialize Session State Keys for inputs
 if "input_phrase" not in st.session_state: st.session_state.input_phrase = ""
 if "input_vocab" not in st.session_state: st.session_state.input_vocab = ""
+
+# ========================== SIDEBAR ==========================
+with st.sidebar:
+    st.header("⚙️ Settings")
+    TARGET_LANG = st.selectbox("🎯 Definition Language", ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"], index=0)
+    GEMINI_MODEL = st.selectbox("🤖 AI Model", ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"], index=0)
+    st.divider()
+    if "rpd_count" in st.session_state:
+        st.metric("Daily AI Usage", f"{st.session_state.rpd_count}/20")
+    if not st.session_state.vocab_df.empty:
+        st.download_button("💾 Backup Database (CSV)", st.session_state.vocab_df.to_csv(index=False).encode('utf-8'), f"vocab_backup_{date.today()}.csv", "text/csv")
 
 # ========================== TABS ==========================
 tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit / Review", "📇 Generate Anki"])
@@ -338,20 +336,11 @@ tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit / Review", "📇 Generate An
 with tab1:
     st.subheader("Add new word")
     add_mode = st.radio("Mode", ["Single", "Bulk"], horizontal=True, label_visibility="collapsed")
-    
-    # Show success/error messages from the callback
-    if "save_message" in st.session_state:
-        st.success(st.session_state.save_message)
-        del st.session_state.save_message
-    if "save_error" in st.session_state:
-        st.error(st.session_state.save_error)
-        del st.session_state.save_error
+    if "save_message" in st.session_state: st.success(st.session_state.save_message); del st.session_state.save_message
+    if "save_error" in st.session_state: st.error(st.session_state.save_error); del st.session_state.save_error
 
     if add_mode == "Single":
-        # Phrase Input
         p_raw = st.text_input("🔤 Phrase", placeholder="Paste your sentence here...", key="input_phrase")
-        
-        # Word Extraction Logic
         v_selected = ""
         if p_raw and p_raw not in ["1", "*"]:
             clean_text = re.sub(r'[^\w\s\-\']', '', p_raw)
@@ -361,21 +350,16 @@ with tab1:
                 try:
                     selected_pills = st.pills("Select Vocab", unique_words, selection_mode="multi", label_visibility="collapsed")
                     v_selected = " ".join(selected_pills) if selected_pills else ""
-                except AttributeError:
+                except:
                     selected_words = []
                     cols = st.columns(6)
                     for i, w in enumerate(unique_words):
                         if cols[i % 6].checkbox(w, key=f"chk_{w}"): selected_words.append(w)
                     v_selected = " ".join(selected_words)
         
-        # If pills are clicked, we overwrite the current input_vocab session state BEFORE rendering the input
         if v_selected and v_selected != st.session_state.input_vocab:
             st.session_state.input_vocab = v_selected
-
-        # Vocab Input
         st.text_input("📝 Vocab", placeholder="e.g. serendipity", key="input_vocab")
-        
-        # The button uses on_click to trigger the callback before the UI reruns
         st.button("💾 Save to Cloud", type="primary", use_container_width=True, on_click=save_single_word_callback)
 
     else: 
@@ -409,8 +393,9 @@ with tab3:
     st.subheader("📇 Generate Cyberpunk Anki Deck")
     if st.session_state.vocab_df.empty: st.info("Add words first!")
     else:
+        st.info(f"💡 You have {20 - st.session_state.get('rpd_count', 0)} AI requests left for today.")
         deck_name_input = st.text_input("📦 Deck Name", value="-English Learning::Vocabulary")
-        batch_size = st.slider("⚡ Batch Size", 1, 10, 5)
+        batch_size = st.slider("⚡ Batch Size (Words per Request)", 1, 15, 10)
         include_audio = st.checkbox("🔊 Audio", value=True)
         if st.button("🚀 Generate Deck", type="primary", use_container_width=True):
             subset = st.session_state.vocab_df[st.session_state.vocab_df['status'] == 'New']
@@ -420,5 +405,6 @@ with tab3:
                 if raw_notes:
                     apkg_buffer = create_anki_package(raw_notes, deck_name_input, generate_audio=include_audio)
                     st.download_button("📥 Download .apkg", apkg_buffer, f"AnkiDeck_{datetime.now().strftime('%Y%m%d_%H%M')}.apkg", "application/octet-stream", use_container_width=True)
-                    st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'].isin(subset['vocab']), 'status'] = 'Done'
+                    processed_vocabs = [n['VocabRaw'] for n in raw_notes]
+                    st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'].isin(processed_vocabs), 'status'] = 'Done'
                     save_to_github(st.session_state.vocab_df)
