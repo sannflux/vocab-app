@@ -121,7 +121,7 @@ if "settings_loaded" not in st.session_state:
     cloud_settings = load_settings_from_github()
     st.session_state.auto_sync = cloud_settings.get("auto_sync", False)
     st.session_state.target_lang = cloud_settings.get("target_lang", "Indonesian")
-    st.session_state.ai_model = cloud_settings.get("ai_model", "gemini-2.0-flash-lite-preview-02-05")
+    st.session_state.ai_model = cloud_settings.get("ai_model", "gemini-2.5-flash-lite")
     st.session_state.cefr_level = cloud_settings.get("cefr_level", "B2 (Upper Intermediate)")
     st.session_state.custom_prompt = cloud_settings.get("custom_prompt", "")
     st.session_state.audio_accent = cloud_settings.get("audio_accent", "com")
