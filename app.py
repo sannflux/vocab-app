@@ -25,9 +25,24 @@ except ImportError:
 st.set_page_config(page_title="Vocab App", layout="centered", page_icon="📚")
 st.title("📚 My Cloud Vocab")
 
+# --- MOBILE KEYBOARD AUTO-DISMISS HACK ---
+st.components.v1.html("""
+    <script>
+    const doc = window.parent.document;
+    doc.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            if (doc.activeElement && doc.activeElement.tagName === 'INPUT') {
+                doc.activeElement.blur(); // Forces Android keyboard to close
+            }
+        }
+    });
+    </script>
+""", height=0, width=0)
+
 # --- INITIALIZE SESSION STATE ---
-if "p_input_state" not in st.session_state: st.session_state.p_input_state = ""
-if "v_input_state" not in st.session_state: st.session_state.v_input_state = ""
+if "p_input_field" not in st.session_state: st.session_state.p_input_field = ""
+if "v_input_field" not in st.session_state: st.session_state.v_input_field = ""
+if "word_picker" not in st.session_state: st.session_state.word_picker = None
 
 # --- SECRETS MANAGEMENT ---
 try:
@@ -262,20 +277,20 @@ with tab1:
     add_mode = st.radio("Mode", ["Single", "Bulk"], horizontal=True, label_visibility="collapsed")
     
     if add_mode == "Single":
-        # REPLACED TEXT_AREA WITH TEXT_INPUT (Prevents mobile Enter-key trap)
         p_input = st.text_input("🔤 Paste Sentence/Phrase", key="p_input_field", placeholder="Paste sentence here...")
         
-        # EXTRACTOR USING TOUCH-FRIENDLY PILLS
-        extracted_vocab_manual = ""
+        # CALLBACK TO FIX STATE SYNC ERROR
+        def sync_pill_to_vocab():
+            if st.session_state.word_picker:
+                st.session_state.v_input_field = st.session_state.word_picker.lower()
+
         if p_input:
             words = re.findall(r"[\w']+", p_input)
             if words:
                 unique_words = list(dict.fromkeys(words))
-                selected_word = st.pills("👆 Tap a word to study", options=unique_words, key="word_picker")
-                if selected_word:
-                    extracted_vocab_manual = selected_word.lower()
+                selected_word = st.pills("👆 Tap a word to study", options=unique_words, key="word_picker", on_change=sync_pill_to_vocab)
 
-        v_input = st.text_input("📝 Vocab to Save", value=extracted_vocab_manual, key="v_input_field", placeholder="Enter word manually or pick above").lower().strip()
+        v_input = st.text_input("📝 Vocab to Save", key="v_input_field", placeholder="Enter word manually or pick above").lower().strip()
         
         c1, c2 = st.columns(2)
         with c1:
@@ -293,13 +308,13 @@ with tab1:
                     if save_to_github(df):
                         st.session_state.p_input_field = ""
                         st.session_state.v_input_field = ""
-                        if "word_picker" in st.session_state: st.session_state.word_picker = None
+                        st.session_state.word_picker = None
                         st.success(f"✅ Saved '{v_input}'!"); time.sleep(0.5); st.rerun()
         with c2:
             if st.button("🗑️ Clear", use_container_width=True):
                 st.session_state.p_input_field = ""
                 st.session_state.v_input_field = ""
-                if "word_picker" in st.session_state: st.session_state.word_picker = None
+                st.session_state.word_picker = None
                 st.rerun()
 
     else:
@@ -321,7 +336,6 @@ with tab2:
     if df.empty: 
         st.info("Add words first!")
     else:
-        # MOBILE-SAFE EDITOR: Replaced memory-heavy data_editor with simple search & form
         st.write("### 🔍 Search & Edit")
         search = st.text_input("Search word...", "").lower().strip()
         filtered_df = df.copy()
