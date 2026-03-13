@@ -122,7 +122,6 @@ def robust_json_parse(text: str):
             pass
     return None
 
-# ========================== SPEECH (Browser) ==========================
 def speak_word(text: str, lang: str = "en-US"):
     if not text: return
     safe_text = text.replace('"', '\\"').replace("'", "\\'")
@@ -132,8 +131,7 @@ def speak_word(text: str, lang: str = "en-US"):
 # ========================== ASYNC BATCH GENERATOR ==========================
 def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
     model = get_gemini_model(st.session_state.gemini_key, GEMINI_MODEL)
-    if not model:
-        return []
+    if not model: return []
 
     all_card_data = []
     total_items = len(vocab_phrase_list)
@@ -145,9 +143,9 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
         prompt = f"""You are an expert lexicographer. Output ONLY a JSON array.
 RULES: 
 1. Copy ALL fields exactly. 
-2. IF 'phrase' starts with '*': Treat it as a CONTEXT HINT (e.g. phrase='*bird' for vocab='crane'). Use this hint to pick the specific definition, but generate a NEW sentence for the final 'phrase' field.
+2. IF 'phrase' starts with '*': Treat it as a CONTEXT HINT.
 3. IF 'phrase' is normal text: Define based on that usage.
-4. IF 'phrase' is empty: Generate ONE simple sentence (max 12 words) using the most common definition.
+4. IF 'phrase' is empty: Generate ONE simple sentence (max 12 words).
 5. EXACT vocab unchanged.
 NEVER use markdown, asterisks, bold, italic, or any formatting. Plain text only.
 OUTPUT FORMAT: [{{"vocab": "...", "phrase": "...", "translation": "{TARGET_LANG} meaning", "part_of_speech": "...", "pronunciation_ipa": "/.../", "definition_english": "...", "example_sentences": ["..."], "synonyms_antonyms": {{"synonyms": [], "antonyms": []}}, "etymology": "Plain text only."}}]
@@ -158,10 +156,8 @@ BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
             try:
                 response = model.generate_content(prompt)
                 parsed = robust_json_parse(response.text)
-                if isinstance(parsed, list):
-                    return parsed, vocab_words, attempt
-            except Exception as e:
-                time.sleep((2 ** attempt) + 1)
+                if isinstance(parsed, list): return parsed, vocab_words, attempt
+            except Exception as e: time.sleep((2 ** attempt) + 1)
         return [], vocab_words, 4 
 
     with st.status("🤖 Initializing AI threads...", expanded=True) as status_log:
@@ -289,7 +285,7 @@ def save_to_github(dataframe):
 
 if "vocab_df" not in st.session_state: st.session_state.vocab_df = load_data().copy()
 
-# ========================== SIDEBAR & WORD OF THE DAY ==========================
+# ========================== SIDEBAR ==========================
 with st.sidebar:
     st.header("⚙️ Settings")
     TARGET_LANG = st.selectbox("🎯 Definition Language", ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"], index=0)
@@ -304,6 +300,38 @@ with st.sidebar:
         st.subheader(row["vocab"].upper()); st.caption(row["phrase"])
         if st.button("🔊 Pronounce"): speak_word(row["vocab"])
 
+# ========================== CALLBACK LOGIC FOR INSTANT CLEAR ==========================
+def save_single_word_callback():
+    v = st.session_state.input_vocab.lower().strip()
+    p_raw = st.session_state.input_phrase
+    
+    if v:
+        p = p_raw.strip()
+        if p and p != "1" and not p.startswith("*"):
+            if p.endswith(","): p = p[:-1] + "."
+            elif not p.endswith((".", "!", "?")): p += "."
+            p = p.capitalize()
+        
+        # Update Data
+        mask = st.session_state.vocab_df['vocab'] == v
+        if not st.session_state.vocab_df.empty and mask.any():
+            st.session_state.vocab_df.loc[mask, ['phrase', 'status']] = [p, 'New']
+        else:
+            st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, pd.DataFrame([{"vocab": v, "phrase": p, "status": "New"}])], ignore_index=True)
+        
+        save_to_github(st.session_state.vocab_df)
+        
+        # INSTANT CLEAR MAGIC: Setting these session states instantly empties the inputs on next render
+        st.session_state.input_phrase = ""
+        st.session_state.input_vocab = ""
+        st.session_state.save_message = f"✅ Saved '{v}'!"
+    else:
+        st.session_state.save_error = "⚠️ Enter a vocabulary word."
+
+# Initialize Session State Keys for inputs
+if "input_phrase" not in st.session_state: st.session_state.input_phrase = ""
+if "input_vocab" not in st.session_state: st.session_state.input_vocab = ""
+
 # ========================== TABS ==========================
 tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit / Review", "📇 Generate Anki"])
 
@@ -311,15 +339,19 @@ with tab1:
     st.subheader("Add new word")
     add_mode = st.radio("Mode", ["Single", "Bulk"], horizontal=True, label_visibility="collapsed")
     
-    if add_mode == "Single":
-        # Using Session State to manage clear-on-save
-        if "input_phrase" not in st.session_state: st.session_state.input_phrase = ""
-        if "input_vocab" not in st.session_state: st.session_state.input_vocab = ""
+    # Show success/error messages from the callback
+    if "save_message" in st.session_state:
+        st.success(st.session_state.save_message)
+        del st.session_state.save_message
+    if "save_error" in st.session_state:
+        st.error(st.session_state.save_error)
+        del st.session_state.save_error
 
+    if add_mode == "Single":
         # Phrase Input
         p_raw = st.text_input("🔤 Phrase", placeholder="Paste your sentence here...", key="input_phrase")
         
-        # Word Extraction
+        # Word Extraction Logic
         v_selected = ""
         if p_raw and p_raw not in ["1", "*"]:
             clean_text = re.sub(r'[^\w\s\-\']', '', p_raw)
@@ -336,34 +368,15 @@ with tab1:
                         if cols[i % 6].checkbox(w, key=f"chk_{w}"): selected_words.append(w)
                     v_selected = " ".join(selected_words)
         
-        # Vocab Input (Prefilled by selection OR manually typed)
-        vocab_final_val = v_selected if v_selected else st.session_state.input_vocab
-        v = st.text_input("📝 Vocab", value=vocab_final_val, placeholder="e.g. serendipity", key="input_vocab").lower().strip()
+        # If pills are clicked, we overwrite the current input_vocab session state BEFORE rendering the input
+        if v_selected and v_selected != st.session_state.input_vocab:
+            st.session_state.input_vocab = v_selected
+
+        # Vocab Input
+        st.text_input("📝 Vocab", placeholder="e.g. serendipity", key="input_vocab")
         
-        if st.button("💾 Save to Cloud", type="primary", use_container_width=True):
-            if v:
-                p = p_raw.strip()
-                if p and p != "1" and not p.startswith("*"):
-                    if p.endswith(","): p = p[:-1] + "."
-                    elif not p.endswith((".", "!", "?")): p += "."
-                    p = p.capitalize()
-                
-                # Update Data
-                mask = st.session_state.vocab_df['vocab'] == v
-                if not st.session_state.vocab_df.empty and mask.any():
-                    st.session_state.vocab_df.loc[mask, ['phrase', 'status']] = [p, 'New']
-                else:
-                    st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, pd.DataFrame([{"vocab": v, "phrase": p, "status": "New"}])], ignore_index=True)
-                
-                save_to_github(st.session_state.vocab_df)
-                st.success(f"✅ Saved '{v}'!")
-                
-                # IMMEDIATE CLEAR: Reset session state keys
-                st.session_state.input_phrase = ""
-                st.session_state.input_vocab = ""
-                time.sleep(0.5)
-                st.rerun()
-            else: st.error("⚠️ Enter a vocabulary word.")
+        # The button uses on_click to trigger the callback before the UI reruns
+        st.button("💾 Save to Cloud", type="primary", use_container_width=True, on_click=save_single_word_callback)
 
     else: 
         bulk_text = st.text_area("Paste List (word, phrase)", height=150)
