@@ -355,20 +355,26 @@ with tab1:
     add_mode = st.radio("Mode", ["Phrase-First", "Bulk"], horizontal=True, label_visibility="collapsed")
     
     if add_mode == "Phrase-First":
-        # Removed st.form to allow real-time reactivity for the multiselect
         p_input = st.text_area("📝 Paste Phrase", placeholder="Paste the sentence here...", height=100, key="p_input_text")
         
         words_in_phrase = []
         if p_input.strip():
-            # Standard word boundary regex for dynamic extraction
             words_in_phrase = sorted(list(set(re.findall(r'\b\w+\b', p_input.lower()))))
         
-        v_selected = st.multiselect("🎯 Select Vocab Word(s)", options=words_in_phrase, key="v_selected_words")
+        # Use st.pills for native "tap to select" feel, fallback to multiselect if older Streamlit version
+        if hasattr(st, "pills"):
+            v_selected = st.pills("🎯 Tap word(s) to extract:", options=words_in_phrase, selection_mode="multi", key="v_selected_words")
+        else:
+            v_selected = st.multiselect("🎯 Select Vocab Word(s):", options=words_in_phrase, key="v_selected_words")
         
         if st.button("💾 Save to Cloud", type="primary", use_container_width=True):
             if p_input and v_selected:
                 current_df = st.session_state.df.copy()
                 phrase_formatted = p_input.strip().capitalize()
+                
+                # Auto-append period if missing terminal punctuation
+                if phrase_formatted and phrase_formatted[-1] not in ".!?":
+                    phrase_formatted += "."
                 
                 for word in v_selected:
                     word_clean = word.strip().lower()
@@ -381,7 +387,6 @@ with tab1:
                 
                 if save_to_github(current_df):
                     st.success(f"✅ Saved {len(v_selected)} words!")
-                    # Manually clear session state keys to replicate form clearance
                     st.session_state.p_input_text = ""
                     st.session_state.v_selected_words = []
                     time.sleep(1)
@@ -399,6 +404,11 @@ with tab1:
                 parts = line.split(',', 1)
                 bv = parts[0].strip().lower()
                 bp = parts[1].strip() if len(parts) > 1 else ""
+                
+                # Auto-append period to bulk phrases as well
+                if bp and bp[-1] not in ".!?":
+                    bp += "."
+                    
                 if bv: new_rows.append({"vocab": bv, "phrase": bp, "status": "New"})
             if new_rows:
                 current_df = st.session_state.df.copy()
@@ -419,7 +429,6 @@ with tab2:
         if search: display_df = display_df[display_df['vocab'].str.contains(search, case=False)]
         if filter_new: display_df = display_df[display_df['status'] == 'New']
         
-        # Added explicit key to prevent state loss
         edited = st.data_editor(display_df, key="vocab_editor_main", num_rows="dynamic", use_container_width=True, hide_index=True, column_config={"status": st.column_config.SelectboxColumn("Status", options=["New", "Done"], required=True)})
         if st.button("💾 Save Changes", type="primary", use_container_width=True):
             current_df = st.session_state.df.copy().set_index('vocab')
