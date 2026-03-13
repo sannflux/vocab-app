@@ -42,9 +42,16 @@ if "deck_ready" not in st.session_state:
     st.session_state.apkg_buffer = None
     st.session_state.apkg_filename = ""
 
-# Initialization for persistence
+# Initialization for persistence and safe clearing
 if "p_input_text" not in st.session_state:
     st.session_state.p_input_text = ""
+if "clear_input" not in st.session_state:
+    st.session_state.clear_input = False
+
+# Safe pre-render clearing to avoid StreamlitAPIException
+if st.session_state.clear_input:
+    st.session_state.p_input_text = ""
+    st.session_state.clear_input = False
 
 # ========================== SIDEBAR & CONFIG ==========================
 with st.sidebar:
@@ -202,7 +209,6 @@ def load_data():
     except Exception: 
         df = pd.DataFrame(columns=['vocab', 'phrase', 'status'])
     
-    # Enforce schema
     for col in ['vocab', 'phrase', 'status']:
         if col not in df.columns:
             df[col] = 'New' if col == 'status' else ""
@@ -227,7 +233,6 @@ tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit", "📇 Anki"])
 
 with tab1:
     st.subheader("Add new word")
-    # key="p_input_text" natively binds UI to session state
     p_in = st.text_input("📝 Paste Word or Phrase", key="p_input_text", placeholder="e.g. Serendipity OR The cat sat on the mat.")
     
     words = sorted(list(set(re.findall(r'\b\w+\b', p_in.lower())))) if p_in.strip() else []
@@ -239,7 +244,6 @@ with tab1:
     if st.button("💾 Save to Cloud", type="primary", use_container_width=True):
         p_val = st.session_state.p_input_text.strip()
         if p_val:
-            # Check if user pasted a sentence but didn't pick any words
             if len(words) > 1 and not v_sel:
                 st.warning("⚠️ Multiple words detected. Please tap the specific words you wish to learn from the list above.")
             else:
@@ -257,7 +261,7 @@ with tab1:
                 
                 if save_to_github(current_df):
                     st.success("✅ Saved!")
-                    st.session_state.p_input_text = "" # Clears widget via key binding
+                    st.session_state.clear_input = True
                     time.sleep(0.5)
                     st.rerun()
         else:
@@ -269,7 +273,6 @@ with tab2:
         display_df = st.session_state.df.copy()
         if search: display_df = display_df[display_df['vocab'].str.contains(search, case=False)]
         
-        # key="vocab_editor_main" prevents state ghosting
         edited = st.data_editor(display_df, key="vocab_editor_main", use_container_width=True, hide_index=True)
         
         if st.button("💾 Save Changes"):
