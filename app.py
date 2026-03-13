@@ -48,7 +48,7 @@ if "p_input_text" not in st.session_state:
 if "clear_input" not in st.session_state:
     st.session_state.clear_input = False
 
-# Safe pre-render clearing to avoid StreamlitAPIException
+# Safe pre-render clearing
 if st.session_state.clear_input:
     st.session_state.p_input_text = ""
     st.session_state.clear_input = False
@@ -121,8 +121,7 @@ def speak_word(text: str, lang: str = "en-US"):
     st.components.v1.html(js, height=0)
 
 def robust_json_parse(text: str):
-    try: 
-        return json.loads(text)
+    try: return json.loads(text)
     except Exception:
         match = re.search(r'\[.*\]', text, re.DOTALL)
         if match:
@@ -136,7 +135,7 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
     all_card_data = []
     pb = st.progress(0)
     for i in range(0, len(vocab_phrase_list), batch_size):
-        pb.progress(i / len(vocab_phrase_list), text=f"🤖 AI Processing {i}/{len(vocab_phrase_list)}...")
+        pb.progress(i / len(vocab_phrase_list), text=f"🤖 Processing {i}/{len(vocab_phrase_list)}...")
         batch = vocab_phrase_list[i:i + batch_size]
         batch_dicts = [{"vocab": v[0], "phrase": v[1]} for v in batch]
         prompt = f"""Output ONLY JSON array. BATCH: {json.dumps(batch_dicts)}. Format: [{{"vocab": "...", "phrase": "...", "translation": "{TARGET_LANG} meaning", "part_of_speech": "...", "pronunciation_ipa": "/.../", "definition_english": "...", "example_sentences": ["..."], "synonyms_antonyms": {{"synonyms": [], "antonyms": []}}, "etymology": "..."}}]"""
@@ -147,8 +146,7 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
                 if isinstance(parsed, list):
                     all_card_data.extend(parsed)
                     break
-            except Exception: 
-                time.sleep(2**attempt)
+            except Exception: time.sleep(2**attempt)
     pb.empty()
     return all_card_data
 
@@ -208,10 +206,8 @@ def load_data():
         df = pd.read_csv(io.StringIO(content.decoded_content.decode('utf-8')))
     except Exception: 
         df = pd.DataFrame(columns=['vocab', 'phrase', 'status'])
-    
     for col in ['vocab', 'phrase', 'status']:
-        if col not in df.columns:
-            df[col] = 'New' if col == 'status' else ""
+        if col not in df.columns: df[col] = 'New' if col == 'status' else ""
     df['phrase'] = df['phrase'].fillna("")
     return df.sort_values(by="vocab", ignore_index=True)
 
@@ -221,64 +217,71 @@ def save_to_github(df):
     try:
         f = repo.get_contents("vocabulary.csv")
         repo.update_file(f.path, "Update", csv, f.sha)
-    except Exception: 
-        repo.create_file("vocabulary.csv", "Init", csv)
+    except Exception: repo.create_file("vocabulary.csv", "Init", csv)
     load_data.clear(); st.session_state.df = df.copy()
     return True
 
 if "df" not in st.session_state: st.session_state.df = load_data().copy()
 
 # ========================== TABS ==========================
-tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit", "📇 Anki"])
+tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit / Delete", "📇 Anki"])
 
 with tab1:
     st.subheader("Add new word")
-    p_in = st.text_input("📝 Paste Word or Phrase", key="p_input_text", placeholder="e.g. Serendipity OR The cat sat on the mat.")
-    
+    p_in = st.text_input("📝 Paste Word or Phrase", key="p_input_text", placeholder="e.g. Serendipity")
     words = sorted(list(set(re.findall(r'\b\w+\b', p_in.lower())))) if p_in.strip() else []
-    
-    v_sel = []
-    if words:
-        v_sel = st.pills("🎯 Tap words to extract:", options=words, selection_mode="multi")
+    v_sel = st.pills("🎯 Tap words to extract:", options=words, selection_mode="multi") if words else []
 
     if st.button("💾 Save to Cloud", type="primary", use_container_width=True):
         p_val = st.session_state.p_input_text.strip()
         if p_val:
-            if len(words) > 1 and not v_sel:
-                st.warning("⚠️ Multiple words detected. Please tap the specific words you wish to learn from the list above.")
-            else:
-                vocabs_to_add = v_sel if v_sel else [p_val.lower()]
-                current_df = st.session_state.df.copy()
-                phrase_fixed = ensure_trailing_dot(cap_each_sentence(p_val))
-                
-                for v in vocabs_to_add:
-                    v_clean = v.strip().lower()
-                    if not current_df.empty and v_clean in current_df['vocab'].values:
-                        current_df.loc[current_df['vocab'] == v_clean, 'phrase'] = phrase_fixed
-                        current_df.loc[current_df['vocab'] == v_clean, 'status'] = 'New'
-                    else:
-                        current_df = pd.concat([current_df, pd.DataFrame([{"vocab": v_clean, "phrase": phrase_fixed, "status": "New"}])], ignore_index=True)
-                
-                if save_to_github(current_df):
-                    st.success("✅ Saved!")
-                    st.session_state.clear_input = True
-                    time.sleep(0.5)
-                    st.rerun()
-        else:
-            st.warning("Input is empty.")
+            vocabs_to_add = v_sel if v_sel else [p_val.lower()]
+            current_df = st.session_state.df.copy()
+            phrase_fixed = ensure_trailing_dot(cap_each_sentence(p_val))
+            for v in vocabs_to_add:
+                v_clean = v.strip().lower()
+                if not current_df.empty and v_clean in current_df['vocab'].values:
+                    current_df.loc[current_df['vocab'] == v_clean, 'phrase'] = phrase_fixed
+                    current_df.loc[current_df['vocab'] == v_clean, 'status'] = 'New'
+                else:
+                    current_df = pd.concat([current_df, pd.DataFrame([{"vocab": v_clean, "phrase": phrase_fixed, "status": "New"}])], ignore_index=True)
+            if save_to_github(current_df):
+                st.success("✅ Saved!"); st.session_state.clear_input = True
+                time.sleep(0.5); st.rerun()
+        else: st.warning("Input empty.")
 
 with tab2:
     if not st.session_state.df.empty:
+        st.subheader("✏️ Edit or Delete Data")
+        st.caption("💡 To delete: Select a row and press 'Backspace' or use the trash icon.")
         search = st.text_input("🔎 Search...")
         display_df = st.session_state.df.copy()
-        if search: display_df = display_df[display_df['vocab'].str.contains(search, case=False)]
+        view_vocabs = []
         
-        edited = st.data_editor(display_df, key="vocab_editor_main", use_container_width=True, hide_index=True)
+        if search: 
+            display_df = display_df[display_df['vocab'].str.contains(search, case=False)]
+            view_vocabs = display_df['vocab'].tolist()
+            
+        edited_df = st.data_editor(display_df, key="main_editor", use_container_width=True, hide_index=True, num_rows="dynamic")
         
-        if st.button("💾 Save Changes"):
-            df_final = st.session_state.df.copy().set_index('vocab')
-            df_final.update(edited.set_index('vocab'))
-            if save_to_github(df_final.reset_index()): st.toast("✅ Updated!")
+        if st.button("💾 Commit Changes (Save/Delete)", type="primary", use_container_width=True):
+            if search:
+                # Remove the original searched items from master, then append the edited version
+                master_df = st.session_state.df.copy()
+                master_df = master_df[~master_df['vocab'].isin(view_vocabs)]
+                final_df = pd.concat([master_df, edited_df], ignore_index=True)
+            else:
+                final_df = edited_df
+                
+            if save_to_github(final_df):
+                st.toast("✅ Cloud Updated!", icon="🎉")
+                time.sleep(0.5); st.rerun()
+        
+        st.divider()
+        if st.button("🗑️ Clear all 'Done' words", use_container_width=True):
+            filtered_df = st.session_state.df[st.session_state.df['status'] != 'Done']
+            if save_to_github(filtered_df):
+                st.success("Cleared 'Done' words!"); time.sleep(0.5); st.rerun()
 
 with tab3:
     if st.session_state.df.empty: st.info("No words.")
@@ -293,10 +296,7 @@ with tab3:
                 st.session_state.apkg_buffer = buf.getvalue()
                 st.session_state.apkg_filename = f"Deck_{datetime.now().strftime('%m%d_%H%M')}.apkg"
                 st.session_state.deck_ready = True
-                subset_vocabs = subset['vocab'].tolist()
-                st.session_state.df.loc[st.session_state.df['vocab'].isin(subset_vocabs), 'status'] = 'Done'
-                save_to_github(st.session_state.df)
-                st.rerun()
-
+                st.session_state.df.loc[st.session_state.df['vocab'].isin(subset['vocab'].tolist()), 'status'] = 'Done'
+                save_to_github(st.session_state.df); st.rerun()
         if st.session_state.deck_ready:
             st.download_button("📥 Download .apkg", data=st.session_state.apkg_buffer, file_name=st.session_state.apkg_filename, mime="application/octet-stream", use_container_width=True)
