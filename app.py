@@ -25,6 +25,22 @@ except ImportError:
 st.set_page_config(page_title="Vocab App", layout="centered", page_icon="📚")
 st.title("📚 My Cloud Vocab")
 
+# ========================== MOBILE KEYBOARD FIX ==========================
+# This invisible script listens for the "Enter" key on any input field and blurs it, 
+# forcing mobile keyboards (iOS/Android) to close automatically.
+js_hide_keyboard = """
+<script>
+const doc = window.parent.document;
+doc.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
+        // Slight delay ensures Streamlit registers the input before the keyboard drops
+        setTimeout(() => { e.target.blur(); }, 50);
+    }
+}, true);
+</script>
+"""
+st.components.v1.html(js_hide_keyboard, height=0)
+
 # --- SECRETS MANAGEMENT ---
 try:
     token = st.secrets["GITHUB_TOKEN"]
