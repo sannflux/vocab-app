@@ -177,6 +177,7 @@ with st.sidebar:
         if st.button("☁️ Sync to GitHub", type="primary"):
             if save_to_github(st.session_state.vocab_df): 
                 st.session_state.unsaved_changes = False
+                st.toast("Manually Synced to GitHub", icon="✅")
                 st.rerun()
 
 # ========================== GEMINI ==========================
@@ -220,21 +221,25 @@ def fetch_ai_definition(vocab, phrase, api_key, model_name, target_lang):
     prompt = f'Provide a 1-sentence {target_lang} translation and short English definition for "{vocab}" in context of: "{phrase}". JSON format: {{"translation": "...", "definition": "..."}}'
     try:
         res = model.generate_content(prompt).text
-        data = json.loads(res)
+        # Stripping potential markdown wrapping
+        clean_res = re.sub(r'```(?:json)?\n?(.*?)\n?```', r'\1', res, flags=re.DOTALL).strip()
+        data = json.loads(clean_res)
         return f"**{target_lang}:** {data.get('translation', '')} \n\n **Def:** {data.get('definition', '')}"
     except Exception: return "Error fetching AI definition."
 
 # ========================== BATCH GENERATOR ==========================
 def robust_json_parse(text: str):
-    try: return json.loads(text)
+    # Aggressively strip markdown code blocks that Gemini frequently returns
+    clean_text = re.sub(r'```(?:json)?\n?(.*?)\n?```', r'\1', text, flags=re.DOTALL).strip()
+    try: return json.loads(clean_text)
     except Exception: pass
-    match = re.search(r'\[.*\]', text, re.DOTALL)
+    match = re.search(r'\[.*\]', clean_text, re.DOTALL)
     if match:
         try: return json.loads(match.group(0))
         except Exception: pass
     return None
 
-def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
+def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6, progress_bar=None, status_text=None):
     model = get_gemini_model(st.session_state.gemini_key, GEMINI_MODEL)
     if not model: return []
     all_card_data = []
@@ -248,6 +253,9 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
     for i in range(0, total_items, batch_size):
         batch = vocab_phrase_list[i:i + batch_size]
         batch_dicts = [{"vocab": v[0], "phrase": v[1]} for v in batch]
+        
+        if status_text:
+            status_text.markdown(f"**🤖 Processing AI Batch:** {i+1} to {min(i+batch_size, total_items)} of {total_items}...")
         
         prompt = f"""You are an expert lexicographer. Output ONLY a JSON array.
 RULES:
@@ -267,11 +275,15 @@ INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
             except Exception: 
                 time.sleep(1)
         else: continue 
+        
+        if progress_bar:
+            progress_bar.progress(min((i + batch_size) / total_items, 1.0))
+            
     return all_card_data
 
-def process_anki_data(df_subset, batch_size=6):
+def process_anki_data(df_subset, batch_size=6, progress_bar=None, status_text=None):
     vocab_phrase_list = df_subset[['vocab', 'phrase']].values.tolist()
-    all_card_data = generate_anki_card_data_batched(vocab_phrase_list, batch_size=batch_size)
+    all_card_data = generate_anki_card_data_batched(vocab_phrase_list, batch_size=batch_size, progress_bar=progress_bar, status_text=status_text)
     processed_notes = []
     for card_data in all_card_data:
         vocab_raw = str(card_data.get("vocab", "")).strip().lower()
@@ -298,7 +310,7 @@ THEMES = {
     """
 }
 
-def create_anki_package(notes_data, deck_name, css_theme, generate_audio=True, max_per_deck=0):
+def create_anki_package(notes_data, deck_name, css_theme, generate_audio=True, max_per_deck=0, progress_bar=None, status_text=None):
     front = """<div class="vellum-focus-container front"><div class="prompt-text">{{cloze:Text}}</div></div>"""
     back = """<div class="vellum-focus-container back"><div class="prompt-text solved-text">{{cloze:Text}}</div>{{#PhraseTranslation}}<div class="context-translation">{{PhraseTranslation}}</div>{{/PhraseTranslation}}</div><div class="vellum-detail-container">{{#Definition}}<div class="vellum-section"><div class="section-header">📜 DEFINITION</div><div class="content">{{Definition}}</div></div>{{/Definition}}{{#Pronunciation}}<div class="vellum-section"><div class="section-header">🗣️ PRONUNCIATION</div><div class="content">{{Pronunciation}}</div></div>{{/Pronunciation}}{{#Examples}}<div class="vellum-section"><div class="section-header">🖋️ EXAMPLES</div><div class="content">{{Examples}}</div></div>{{/Examples}}</div>{{Audio}}"""
     my_model = genanki.Model(1607392320, 'Vocab Model v2', fields=[{'name': 'Text'}, {'name': 'PhraseTranslation'}, {'name': 'Pronunciation'}, {'name': 'Definition'}, {'name': 'Examples'}, {'name': 'Synonyms'}, {'name': 'Antonyms'}, {'name': 'Etymology'}, {'name': 'Audio'}], templates=[{'name': 'Card 1', 'qfmt': front, 'afmt': back}], css=css_theme, model_type=genanki.Model.CLOZE)
@@ -306,12 +318,20 @@ def create_anki_package(notes_data, deck_name, css_theme, generate_audio=True, m
     with tempfile.TemporaryDirectory() as tmp:
         audio_map = {}
         if generate_audio:
+            unique = {n['VocabRaw'] for n in notes_data if n['VocabRaw']}
+            total_audio = len(unique)
+            if status_text: status_text.markdown(f"**🔊 Generating Audio for {total_audio} words...**")
+            
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
-                unique = {n['VocabRaw'] for n in notes_data if n['VocabRaw']}
                 futures = {ex.submit(generate_audio_file, v, tmp, st.session_state.audio_accent, st.session_state.audio_speed): v for v in unique}
+                completed = 0
                 for f in concurrent.futures.as_completed(futures):
+                    completed += 1
+                    if progress_bar: progress_bar.progress(completed / total_audio)
                     v, fname, fpath = f.result()
                     if fname: media.append(fpath); audio_map[v] = f"[sound:{fname}]"
+        
+        if status_text: status_text.markdown("**📦 Packaging Deck...**")
         decks = []
         if max_per_deck > 0 and len(notes_data) > max_per_deck:
             for idx, chunk in enumerate([notes_data[i:i + max_per_deck] for i in range(0, len(notes_data), max_per_deck)]):
@@ -325,7 +345,10 @@ def create_anki_package(notes_data, deck_name, css_theme, generate_audio=True, m
         pkg = genanki.Package(decks); pkg.media_files = media
         buf = io.BytesIO(); out = os.path.join(tmp, 'out.apkg'); pkg.write_to_file(out)
         with open(out, "rb") as f: buf.write(f.read())
-        buf.seek(0); return buf
+        buf.seek(0); 
+        if status_text: status_text.empty()
+        if progress_bar: progress_bar.empty()
+        return buf
 
 def generate_audio_file(v, tmp, accent, slow):
     try:
@@ -377,7 +400,7 @@ with tab1:
                     st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'] == v, ['phrase', 'status', 'tags']] = [p, 'New', t]
                 else: 
                     st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, pd.DataFrame([{"vocab": v, "phrase": p, "tags": t, "status": "New", "date_added": get_wib_now()}])], ignore_index=True)
-                trigger_sync(); st.session_state.phrase_key += 1; st.success(f"Saved {v}!"); time.sleep(1); st.rerun()
+                trigger_sync(); st.session_state.phrase_key += 1; st.toast(f"Saved {v}!", icon="✅"); time.sleep(0.5); st.rerun()
     else:
         bulk_text = st.text_area("Paste List (vocab, phrase)")
         bulk_tags = st.text_input("Apply tags to all")
@@ -391,7 +414,7 @@ with tab1:
                 if bv: new_rows.append({"vocab": bv, "phrase": bp, "tags": bulk_tags, "status": "New", "date_added": get_wib_now()})
             if new_rows: 
                 st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, pd.DataFrame(new_rows)]).drop_duplicates(subset=['vocab'], keep='last').reset_index(drop=True)
-                trigger_sync(); st.success("Added!"); time.sleep(1); st.rerun()
+                trigger_sync(); st.toast("Bulk Added!", icon="✅"); time.sleep(0.5); st.rerun()
 
 with tab2:
     if st.session_state.vocab_df.empty: st.info("Empty")
@@ -415,7 +438,7 @@ with tab2:
                 st.session_state.vocab_df = st.session_state.vocab_df[~st.session_state.vocab_df['vocab'].isin(deleted)]
             for _, r in edited[edited["🗑️"] == False].iterrows(): 
                 st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'] == r['vocab'], ['phrase', 'status', 'tags']] = [r['phrase'], r['status'], r['tags']]
-            trigger_sync(); st.success("Updated!"); time.sleep(1); st.rerun()
+            trigger_sync(); st.toast("Updated!", icon="✅"); time.sleep(0.5); st.rerun()
 
 with tab3:
     st.subheader("Generate Anki")
@@ -423,21 +446,30 @@ with tab3:
         st.session_state.deck_name = st.text_input("Deck Name", value=st.session_state.deck_name)
         c1, c2, c3 = st.columns(3)
         only_new = c1.checkbox("Only New", True); inc_audio = c2.checkbox("Audio", True); splt = c3.number_input("Split >", 0, 500, 50)
+        
         if st.button("🚀 Build Deck", type="primary", use_container_width=True):
             sub = st.session_state.vocab_df[st.session_state.vocab_df['status'] == 'New'] if only_new else st.session_state.vocab_df
             if not sub.empty:
-                notes = process_anki_data(sub)
+                # Progress UI Elements
+                status_text = st.empty()
+                prog_bar = st.progress(0)
+                
+                notes = process_anki_data(sub, progress_bar=prog_bar, status_text=status_text)
+                
                 if notes:
-                    buf = create_anki_package(notes, st.session_state.deck_name, THEMES["Minimalist Light"], inc_audio, splt)
-                    st.download_button("📥 Download", buf, "deck.apkg", use_container_width=True)
+                    buf = create_anki_package(notes, st.session_state.deck_name, THEMES["Minimalist Light"], inc_audio, splt, progress_bar=prog_bar, status_text=status_text)
+                    st.download_button("📥 Download Deck", buf, "deck.apkg", use_container_width=True, type="primary")
                     if only_new: 
                         st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'].isin([n['VocabRaw'] for n in notes]), 'status'] = 'Done'
                         trigger_sync()
-                else: st.warning("AI failed to generate data. Try again.")
+                    st.success("Deck generated successfully!")
+                else: 
+                    st.warning("AI failed to generate data. Check the format or try again.")
+                    status_text.empty()
+                    prog_bar.empty()
 
 with tab4:
     st.subheader("🎮 Study Room")
-    # Filters words that have a phrase (required for the cloze quiz)
     valid_quiz = st.session_state.vocab_df[st.session_state.vocab_df['phrase'] != ""]
     
     if len(valid_quiz) < 4: 
@@ -445,44 +477,37 @@ with tab4:
     else:
         game_mode = st.selectbox("🎮 Quiz Mode", ["Phrase (Fill-in-blank)", "Definition (Meanings)"], index=0)
         
-        # NEXT QUESTION LOGIC
         if st.session_state.quiz_active_row is None or st.button("⏭️ Next Question", use_container_width=True):
             st.session_state.quiz_answered = False
             st.session_state.quiz_correct = False
-            
-            # Select a random row
             quiz_row = valid_quiz.sample(1).iloc[0]
             
-            # Fetch data via AI (with error handling for IndexError)
             with st.spinner("🤖 AI is preparing the question..."):
                 processed_list = process_anki_data(pd.DataFrame([quiz_row]), 1)
                 
                 if processed_list:
                     st.session_state.quiz_active_row = processed_list[0]
-                    # Generate options
                     wrong = valid_quiz[valid_quiz['vocab'] != quiz_row['vocab']]['vocab'].sample(min(3, len(valid_quiz)-1)).tolist()
                     st.session_state.quiz_options = random.sample(wrong + [st.session_state.quiz_active_row['VocabRaw']], 4)
                     st.rerun()
                 else:
                     st.error("AI was unable to process this word. Please click Next again.")
 
-        # DISPLAY QUESTION
         if st.session_state.quiz_active_row:
             q = st.session_state.quiz_active_row
             
             if game_mode == "Phrase (Fill-in-blank)":
-                # Extract the phrase part from the Text field (it contains HTML)
-                display_q = generate_blanked_phrase(q['Text'].split('<br>')[0], q['VocabRaw'])
+                # Safer HTML parsing approach
+                raw_text = q.get('Text', '')
+                phrase_part = raw_text.split('<br>')[0] if '<br>' in raw_text else raw_text
+                display_q = generate_blanked_phrase(phrase_part, q['VocabRaw'])
                 st.markdown(f"### {display_q}")
             else:
                 st.info(f"📜 {q['Definition']}")
             
-            # UI BUTTONS
             cols = st.columns(2)
             for i, opt in enumerate(st.session_state.quiz_options):
-                # Highlight correct answer if already answered
                 b_type = "primary" if st.session_state.quiz_answered and opt == q['VocabRaw'] else "secondary"
-                
                 if cols[i%2].button(opt.upper(), key=f"quiz_opt_{i}", use_container_width=True, type=b_type, disabled=st.session_state.quiz_answered):
                     st.session_state.quiz_answered = True
                     if opt == q['VocabRaw']:
@@ -497,9 +522,7 @@ with tab4:
                 else: 
                     st.error(f"Not quite! The answer was: **{q['VocabRaw']}**")
                 
-                # Show context details after answering
                 with st.expander("📖 View Details", expanded=True):
                     st.write(f"**Meaning:** {q['Definition']}")
                     st.write(f"**Translation:** {q['PhraseTranslation']}")
                     st.write(f"**Pronunciation:** {q['Pronunciation']}")
-
