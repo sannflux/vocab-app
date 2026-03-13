@@ -26,13 +26,15 @@ st.set_page_config(page_title="Vocab App", layout="centered", page_icon="📚")
 st.title("📚 My Cloud Vocab")
 
 # --- MOBILE KEYBOARD AUTO-DISMISS HACK ---
+# This script listens for the Enter key on standard inputs and forces the keyboard to close (blur)
 st.components.v1.html("""
     <script>
     const doc = window.parent.document;
     doc.addEventListener('keydown', function(e) {
         if (e.key === 'Enter') {
-            if (doc.activeElement && doc.activeElement.tagName === 'INPUT') {
-                doc.activeElement.blur(); // Forces Android keyboard to close
+            // Check if the active element is an input field
+            if (doc.activeElement && (doc.activeElement.tagName === 'INPUT')) {
+                doc.activeElement.blur(); // Dismiss Android keyboard
             }
         }
     });
@@ -277,9 +279,10 @@ with tab1:
     add_mode = st.radio("Mode", ["Single", "Bulk"], horizontal=True, label_visibility="collapsed")
     
     if add_mode == "Single":
+        # We bind the input to session state key 'p_input_field'
         p_input = st.text_input("🔤 Paste Sentence/Phrase", key="p_input_field", placeholder="Paste sentence here...")
         
-        # CALLBACK TO FIX STATE SYNC ERROR
+        # CALLBACK: Forces the vocab input state to match the clicked pill
         def sync_pill_to_vocab():
             if st.session_state.word_picker:
                 st.session_state.v_input_field = st.session_state.word_picker.lower()
@@ -288,28 +291,40 @@ with tab1:
             words = re.findall(r"[\w']+", p_input)
             if words:
                 unique_words = list(dict.fromkeys(words))
-                selected_word = st.pills("👆 Tap a word to study", options=unique_words, key="word_picker", on_change=sync_pill_to_vocab)
+                # VERSION SAFE: Using st.pills
+                try:
+                    st.pills("👆 Tap a word to study", options=unique_words, key="word_picker", on_change=sync_pill_to_vocab)
+                except AttributeError:
+                    st.caption("Tap word to study (Update Streamlit for best experience)")
 
-        v_input = st.text_input("📝 Vocab to Save", key="v_input_field", placeholder="Enter word manually or pick above").lower().strip()
+        # We bind the input to session state key 'v_input_field'
+        st.text_input("📝 Vocab to Save", key="v_input_field", placeholder="Enter word manually or pick above")
         
         c1, c2 = st.columns(2)
         with c1:
             if st.button("💾 Save", type="primary", use_container_width=True):
-                if v_input:
+                # FIX: Read directly from session_state to ensure we capture the pill selection
+                current_v_input = st.session_state.v_input_field.lower().strip()
+                current_p_input = st.session_state.p_input_field.strip()
+
+                if current_v_input:
                     proc_phrase = ""
-                    if p_input and p_input.strip() != "1":
-                        proc_phrase = p_input if p_input.startswith("*") else ensure_trailing_dot(cap_first(p_input))
+                    if current_p_input and current_p_input != "1":
+                        proc_phrase = current_p_input if current_p_input.startswith("*") else ensure_trailing_dot(cap_first(current_p_input))
                     
-                    if not df.empty and v_input in df['vocab'].values:
-                        df.loc[df['vocab'] == v_input, ['phrase', 'status']] = [proc_phrase, 'New']
+                    if not df.empty and current_v_input in df['vocab'].values:
+                        df.loc[df['vocab'] == current_v_input, ['phrase', 'status']] = [proc_phrase, 'New']
                     else:
-                        df = pd.concat([df, pd.DataFrame([{"vocab": v_input, "phrase": proc_phrase, "status": "New"}])], ignore_index=True)
+                        df = pd.concat([df, pd.DataFrame([{"vocab": current_v_input, "phrase": proc_phrase, "status": "New"}])], ignore_index=True)
                     
                     if save_to_github(df):
+                        # Clear inputs after success
                         st.session_state.p_input_field = ""
                         st.session_state.v_input_field = ""
                         st.session_state.word_picker = None
-                        st.success(f"✅ Saved '{v_input}'!"); time.sleep(0.5); st.rerun()
+                        st.success(f"✅ Saved '{current_v_input}'!")
+                        time.sleep(0.5)
+                        st.rerun()
         with c2:
             if st.button("🗑️ Clear", use_container_width=True):
                 st.session_state.p_input_field = ""
