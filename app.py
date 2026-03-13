@@ -158,7 +158,7 @@ with st.sidebar:
     st.divider()
     lang_opts = ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"]
     TARGET_LANG = st.selectbox("🎯 Definition Language", lang_opts, index=lang_opts.index(st.session_state.target_lang) if st.session_state.target_lang in lang_opts else 0)
-    model_opts = ["gemini-2.0-flash-lite-preview-02-05", "gemini-2.0-flash-exp"]
+    model_opts = ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"]
     GEMINI_MODEL = st.selectbox("🤖 AI Model", model_opts, index=model_opts.index(st.session_state.ai_model) if st.session_state.ai_model in model_opts else 0)
     CEFR_LEVELS = ["A1 (Beginner)", "A2 (Elementary)", "B1 (Intermediate)", "B2 (Upper Intermediate)", "C1 (Advanced)", "C2 (Mastery)"]
     st.session_state.cefr_level = st.selectbox("📈 CEFR Level", CEFR_LEVELS, index=CEFR_LEVELS.index(st.session_state.cefr_level) if st.session_state.cefr_level in CEFR_LEVELS else 3)
