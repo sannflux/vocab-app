@@ -139,7 +139,7 @@ def speak_word(text: str, lang: str = "en-US"):
     js = f"""<script>if('speechSynthesis'in window){{var u=new SpeechSynthesisUtterance("{safe_text}");u.lang="{lang}";u.rate=0.95;window.speechSynthesis.speak(u);}}</script>"""
     st.components.v1.html(js, height=0)
 
-# ========================== ASYNC BATCH GENERATOR (IDEA 2) ==========================
+# ========================== ASYNC BATCH GENERATOR ==========================
 def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
     model = get_gemini_model(st.session_state.gemini_key, GEMINI_MODEL)
     if not model:
@@ -148,8 +148,6 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
     all_card_data = []
     total_items = len(vocab_phrase_list)
     batches = [vocab_phrase_list[i:i + batch_size] for i in range(0, total_items, batch_size)]
-    
-    progress_bar = st.progress(0, text="🤖 Initializing AI threads...")
     completed_items = 0
 
     def fetch_batch(batch):
@@ -165,30 +163,46 @@ NEVER use markdown, asterisks, bold, italic, or any formatting. Plain text only.
 OUTPUT FORMAT: [{{"vocab": "...", "phrase": "...", "translation": "{TARGET_LANG} meaning", "part_of_speech": "...", "pronunciation_ipa": "/.../", "definition_english": "...", "example_sentences": ["..."], "synonyms_antonyms": {{"synonyms": [], "antonyms": []}}, "etymology": "Plain text only."}}]
 BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
 
+        vocab_words = [v[0] for v in batch]
         for attempt in range(4):
             try:
                 response = model.generate_content(prompt)
                 parsed = robust_json_parse(response.text)
                 if isinstance(parsed, list):
-                    return parsed
+                    return parsed, vocab_words, attempt
             except Exception as e:
                 time.sleep((2 ** attempt) + 1)
-        return []
+        return [], vocab_words, 4 # 4 means failed after max retries
 
-    # Using ThreadPoolExecutor for concurrent batch processing
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        future_to_batch = {executor.submit(fetch_batch, b): b for b in batches}
-        for future in concurrent.futures.as_completed(future_to_batch):
-            batch = future_to_batch[future]
-            result = future.result()
-            if result:
-                all_card_data.extend(result)
-            completed_items += len(batch)
-            progress_bar.progress(min(completed_items / total_items, 1.0), text=f"🤖 AI Processing {completed_items}/{total_items} words...")
+    # Visual Processing Log Implementation
+    with st.status("🤖 Initializing AI threads...", expanded=True) as status_log:
+        progress_bar = st.progress(0, text="Starting batch processing...")
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            future_to_batch = {executor.submit(fetch_batch, b): b for b in batches}
+            for future in concurrent.futures.as_completed(future_to_batch):
+                batch = future_to_batch[future]
+                result, words, attempts = future.result()
+                
+                # Update visual logs
+                words_str = ", ".join(words)
+                if result:
+                    all_card_data.extend(result)
+                    if attempts == 0:
+                        st.markdown(f"✅ **Processed**: `{words_str}`")
+                    else:
+                        st.markdown(f"⚠️ **Recovered** *(Retry {attempts})*: `{words_str}`")
+                else:
+                    st.markdown(f"❌ **Failed** *(Max Retries)*: `{words_str}`")
 
-    progress_bar.progress(1.0, text="✅ AI Generation Complete!")
-    time.sleep(0.5)
-    progress_bar.empty()
+                # Update progress bar
+                completed_items += len(batch)
+                progress_pct = min(completed_items / total_items, 1.0)
+                progress_bar.progress(progress_pct, text=f"🤖 Processing {completed_items}/{total_items} words...")
+
+        status_log.update(label=f"✅ AI Generation Complete! ({completed_items} words)", state="complete", expanded=False)
+        time.sleep(0.5)
+
     return all_card_data
 
 def process_anki_data(df_subset, batch_size=6):
@@ -324,7 +338,7 @@ def create_anki_package(notes_data, deck_name, generate_audio=True):
         buffer.seek(0)
         return buffer
 
-# ========================== LOAD / SAVE WITH SESSION STATE (IDEA 1) ==========================
+# ========================== LOAD / SAVE WITH SESSION STATE ==========================
 @st.cache_data(ttl=600)
 def load_data():
     try:
