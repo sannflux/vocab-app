@@ -28,8 +28,6 @@ st.title("📚 My Cloud Vocab")
 # --- INITIALIZE SESSION STATE ---
 if "p_input_state" not in st.session_state: st.session_state.p_input_state = ""
 if "v_input_state" not in st.session_state: st.session_state.v_input_state = ""
-if "edit_page" not in st.session_state: st.session_state.edit_page = 0
-if "selected_words_state" not in st.session_state: st.session_state.selected_words_state = []
 
 # --- SECRETS MANAGEMENT ---
 try:
@@ -264,19 +262,19 @@ with tab1:
     add_mode = st.radio("Mode", ["Single", "Bulk"], horizontal=True, label_visibility="collapsed")
     
     if add_mode == "Single":
-        # Phrase Input (Session-Safe)
-        p_input = st.text_area("🔤 Paste Sentence/Phrase", key="p_input_field", height=100, placeholder="Paste sentence here...")
+        # REPLACED TEXT_AREA WITH TEXT_INPUT (Prevents mobile Enter-key trap)
+        p_input = st.text_input("🔤 Paste Sentence/Phrase", key="p_input_field", placeholder="Paste sentence here...")
         
-        # Extractor (Smart Picker)
+        # EXTRACTOR USING TOUCH-FRIENDLY PILLS
         extracted_vocab_manual = ""
         if p_input:
             words = re.findall(r"[\w']+", p_input)
             if words:
-                selected_words = st.multiselect("👆 Tap word(s) to study", options=list(dict.fromkeys(words)), key="word_picker")
-                if selected_words:
-                    extracted_vocab_manual = " ".join(selected_words).lower()
+                unique_words = list(dict.fromkeys(words))
+                selected_word = st.pills("👆 Tap a word to study", options=unique_words, key="word_picker")
+                if selected_word:
+                    extracted_vocab_manual = selected_word.lower()
 
-        # Vocab Input (Session-Safe)
         v_input = st.text_input("📝 Vocab to Save", value=extracted_vocab_manual, key="v_input_field", placeholder="Enter word manually or pick above").lower().strip()
         
         c1, c2 = st.columns(2)
@@ -295,13 +293,13 @@ with tab1:
                     if save_to_github(df):
                         st.session_state.p_input_field = ""
                         st.session_state.v_input_field = ""
-                        if "word_picker" in st.session_state: st.session_state.word_picker = []
+                        if "word_picker" in st.session_state: st.session_state.word_picker = None
                         st.success(f"✅ Saved '{v_input}'!"); time.sleep(0.5); st.rerun()
         with c2:
             if st.button("🗑️ Clear", use_container_width=True):
                 st.session_state.p_input_field = ""
                 st.session_state.v_input_field = ""
-                if "word_picker" in st.session_state: st.session_state.word_picker = []
+                if "word_picker" in st.session_state: st.session_state.word_picker = None
                 st.rerun()
 
     else:
@@ -320,45 +318,42 @@ with tab1:
                 if save_to_github(df): st.success(f"✅ Added {len(new_rows)} words!"); time.sleep(1); st.rerun()
 
 with tab2:
-    if df.empty: st.info("Add words first!")
+    if df.empty: 
+        st.info("Add words first!")
     else:
-        search = st.text_input("🔎 Search...", "").lower().strip()
+        # MOBILE-SAFE EDITOR: Replaced memory-heavy data_editor with simple search & form
+        st.write("### 🔍 Search & Edit")
+        search = st.text_input("Search word...", "").lower().strip()
         filtered_df = df.copy()
-        if search: filtered_df = filtered_df[filtered_df['vocab'].str.contains(search, case=False)]
         
-        # --- PAGINATION LOGIC ---
-        page_size = 20
-        total_pages = (len(filtered_df) - 1) // page_size + 1
-        curr_page = st.session_state.get("edit_page", 0)
-        if curr_page >= total_pages: curr_page = 0
-        
-        st.write(f"Page {curr_page + 1} of {total_pages} ({len(filtered_df)} words)")
-        
-        pc1, pc2 = st.columns(2)
-        with pc1:
-            if st.button("⬅️ Previous", disabled=(curr_page == 0), use_container_width=True):
-                st.session_state.edit_page = curr_page - 1; st.rerun()
-        with pc2:
-            if st.button("Next ➡️", disabled=(curr_page >= total_pages - 1), use_container_width=True):
-                st.session_state.edit_page = curr_page + 1; st.rerun()
-
-        start_idx = curr_page * page_size
-        end_idx = start_idx + page_size
-        paged_df = filtered_df.iloc[start_idx:end_idx]
-
-        edited_paged = st.data_editor(paged_df, key=f"editor_{curr_page}", num_rows="dynamic", use_container_width=True, hide_index=True, column_config={"status": st.column_config.SelectboxColumn("Status", options=["New", "Done"], required=True)})
-        
-        if st.button("💾 Save Changes", type="primary", use_container_width=True):
-            # Sync edited page back to main df
-            for idx, row in edited_paged.iterrows():
-                df.loc[df['vocab'] == row['vocab'], ['phrase', 'status']] = [row['phrase'], row['status']]
-            # Handle deletions in the paged view
-            current_vocabs = set(edited_paged['vocab'])
-            original_vocabs = set(paged_df['vocab'])
-            deleted_vocabs = original_vocabs - current_vocabs
-            df = df[~df['vocab'].isin(deleted_vocabs)]
+        if search:
+            filtered_df = filtered_df[filtered_df['vocab'].str.contains(search, case=False)]
             
-            if save_to_github(df): st.toast("✅ Cloud updated!"); st.rerun()
+        if not filtered_df.empty:
+            vocab_to_edit = st.selectbox("👆 Select word to edit", filtered_df['vocab'].tolist())
+            
+            if vocab_to_edit:
+                row_data = df[df['vocab'] == vocab_to_edit].iloc[0]
+                
+                with st.form(key=f"edit_form_{vocab_to_edit}"):
+                    new_phrase = st.text_input("🔤 Phrase", value=row_data['phrase'])
+                    new_status = st.selectbox("Status", ["New", "Done"], index=0 if row_data['status'] == 'New' else 1)
+                    
+                    if st.form_submit_button("💾 Save Changes", use_container_width=True):
+                        df.loc[df['vocab'] == vocab_to_edit, ['phrase', 'status']] = [new_phrase, new_status]
+                        if save_to_github(df):
+                            st.success("✅ Updated!")
+                            time.sleep(0.5)
+                            st.rerun()
+                            
+                if st.button("🗑️ Delete Word", type="secondary", use_container_width=True):
+                    df = df[df['vocab'] != vocab_to_edit]
+                    if save_to_github(df):
+                        st.warning("🗑️ Deleted!")
+                        time.sleep(0.5)
+                        st.rerun()
+        else:
+            st.info("No words match your search.")
 
 with tab3:
     if df.empty: st.info("Add words first!")
