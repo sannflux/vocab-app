@@ -72,13 +72,13 @@ def save_to_github(dataframe):
     load_data_from_github.clear()
     return True
 
-# Initialize Session State Dataframe (Instant UI, Background Sync)
+# Initialize Session State Dataframe
 if "vocab_df" not in st.session_state:
     st.session_state.vocab_df = load_data_from_github().copy()
 
 df = st.session_state.vocab_df
 
-# Smart Merge Logic (Idea 8)
+# Smart Merge Logic
 def merge_new_words(existing_df, new_rows):
     new_df = pd.DataFrame(new_rows)
     for _, row in new_df.iterrows():
@@ -108,16 +108,14 @@ with st.sidebar:
     
     st.divider()
     
-    # Idea 6: Automated Metrics
     st.header("📈 Learning Velocity")
     try:
         df['date_added'] = pd.to_datetime(df['date_added'], errors='coerce')
         seven_days_ago = pd.Timestamp(date.today() - timedelta(days=7))
         recent_count = len(df[df['date_added'] >= seven_days_ago])
         st.metric("Words Added (Last 7 Days)", recent_count)
-        df['date_added'] = df['date_added'].dt.strftime('%Y-%m-%d') # Convert back for clean display
-    except:
-        pass
+        df['date_added'] = df['date_added'].dt.strftime('%Y-%m-%d')
+    except: pass
 
     st.divider()
     st.header("🔑 API Key")
@@ -159,33 +157,26 @@ def get_gemini_model(api_key: str, model_name: str):
 def cap_first(s: str) -> str:
     s = str(s).strip()
     return s[0].upper() + s[1:] if s else s
-
 def ensure_trailing_dot(s: str) -> str:
     s = str(s).strip()
     return s if s and s[-1] in ".!?" else (s + "." if s else "")
-
 def normalize_spaces(text: str) -> str:
     return re.sub(r"\s+", " ", str(text)).strip() if text else ""
-
 def clean_grammar(text: str) -> str:
     if not isinstance(text, str): return text
     rules = [(r"\bto doing\b", "to do"), (r"\bfor helps\b", "to help"), (r"\bis use to\b", "is used to"), (r"\bhelp for to\b", "help to"), (r"\bfor to\b", "to"), (r"\bcan able to\b", "can")]
     for pat, repl in rules: text = re.sub(pat, repl, text, flags=re.IGNORECASE)
     return text
-
 def cap_each_sentence(text: str) -> str:
     if not isinstance(text, str): return text
     sentences = re.split(r'(?<=[.!?])\s+', text)
     return " ".join([cap_first(s) for s in sentences if s.strip()])
-
 def highlight_vocab(text: str, vocab: str) -> str:
     if not text or not vocab: return text
     return re.sub(r'\b' + re.escape(vocab) + r'\b', f'<b><u>{vocab}</u></b>', text, flags=re.IGNORECASE)
-
 def fix_vocab_casing(phrase: str, vocab: str) -> str:
     if not phrase or not vocab: return phrase
     return re.sub(r'\b' + re.escape(vocab.lower()) + r'\b', vocab, phrase, flags=re.IGNORECASE)
-
 def robust_json_parse(text: str):
     try: return json.loads(text)
     except: pass
@@ -195,15 +186,13 @@ def robust_json_parse(text: str):
         except: pass
     return None
 
-# ========================== ASYNC BATCH GENERATOR (Idea 4) ==========================
+# ========================== ASYNC BATCH GENERATOR ==========================
 def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
     model = get_gemini_model(st.session_state.gemini_key, GEMINI_MODEL)
     if not model: return []
-
     all_card_data = []
     total_items = len(vocab_phrase_list)
     batches = [vocab_phrase_list[i:i + batch_size] for i in range(0, total_items, batch_size)]
-    
     progress_bar = st.progress(0, text="🤖 Initializing AI threads...")
     completed_items = 0
 
@@ -229,7 +218,6 @@ BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
                 time.sleep((2 ** attempt) + 1)
         return []
 
-    # Using ThreadPoolExecutor to async generate AI definitions
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         future_to_batch = {executor.submit(fetch_batch, b): b for b in batches}
         for future in concurrent.futures.as_completed(future_to_batch):
@@ -350,22 +338,37 @@ tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit / Review", "📇 Generate An
 
 with tab1:
     st.subheader("Add new word")
-    # Idea 3: Word Extraction Tool Added to modes
-    add_mode = st.radio("Mode", ["Single", "Bulk", "Extract"], horizontal=True, label_visibility="collapsed")
+    add_mode = st.radio("Mode", ["Single", "Bulk"], horizontal=True, label_visibility="collapsed")
     
     if add_mode == "Single":
-        with st.form("add_form", clear_on_submit=True):
-            v = st.text_input("📝 Vocab", placeholder="e.g. serendipity").lower().strip()
-            p_raw = st.text_input("🔤 Phrase", placeholder="I found it by serendipity! (or type '1' to skip)").strip()
-            submitted = st.form_submit_button("💾 Save to Cloud", use_container_width=True)
+        # Removed st.form to allow real-time extraction
+        p_raw = st.text_area("🔤 Phrase / Context (Paste sentence here first)", placeholder="I found it by serendipity! (or type '1' to skip)", height=100).strip()
+        
+        # Auto-extraction logic triggered instantly as user types/pastes
+        extracted_words = []
+        if p_raw and p_raw != "1" and not p_raw.startswith("*"):
+            raw_words = re.findall(r'\b[A-Za-z\-]{3,}\b', p_raw.lower())
+            extracted_words = sorted(list(set(raw_words)))
+        
+        selected_extract = "-- Type manually below --"
+        if extracted_words:
+            st.caption("✨ Detected Words (Select one to auto-fill)")
+            selected_extract = st.selectbox("Extract", ["-- Type manually below --"] + extracted_words, label_visibility="collapsed")
+        
+        v_manual = st.text_input("📝 Vocab", placeholder="e.g. serendipity").lower().strip()
+        
+        # Determine final vocabulary word
+        v = selected_extract if selected_extract != "-- Type manually below --" else v_manual
 
-        if submitted and v:
-            p = "" if p_raw == "1" else p_raw if p_raw.startswith("*") else p_raw.capitalize()
-            # Smart Sync to Session State
-            st.session_state.vocab_df = merge_new_words(st.session_state.vocab_df, [{"vocab": v, "phrase": p}])
-            save_to_github(st.session_state.vocab_df)
-            st.success(f"✅ Saved '{v}'!")
-            time.sleep(0.5); st.rerun()
+        if st.button("💾 Save to Cloud", use_container_width=True, type="primary"):
+            if v:
+                p = "" if p_raw == "1" else p_raw if p_raw.startswith("*") else p_raw.capitalize()
+                st.session_state.vocab_df = merge_new_words(st.session_state.vocab_df, [{"vocab": v, "phrase": p}])
+                save_to_github(st.session_state.vocab_df)
+                st.success(f"✅ Saved '{v}'!")
+                time.sleep(0.5); st.rerun()
+            else:
+                st.warning("⚠️ Please provide a vocabulary word.")
 
     elif add_mode == "Bulk":
         st.info("Paste words separated by newlines. Optional: add comma for phrase.")
@@ -383,28 +386,6 @@ with tab1:
                 save_to_github(st.session_state.vocab_df)
                 st.success(f"✅ Added {len(new_rows)} words!")
                 time.sleep(0.5); st.rerun()
-                
-    else: # Extract Mode (Idea 3)
-        st.info("Paste an article or paragraph. We'll extract words so you can quickly select which ones to learn.")
-        article_text = st.text_area("Paste Text Here", height=150)
-        if article_text:
-            sentences = re.split(r'(?<=[.!?])\s+', article_text.replace('\n', ' '))
-            raw_words = re.findall(r'\b[A-Za-z\-]{3,}\b', article_text.lower())
-            unique_words = sorted(list(set(raw_words)))
-            
-            selected_words = st.multiselect("Select words to add:", unique_words)
-            if st.button("💾 Add Selected Words", type="primary"):
-                new_rows = []
-                for w in selected_words:
-                    # Find the first sentence containing this word to use as the context phrase
-                    context = next((s for s in sentences if re.search(r'\b' + re.escape(w) + r'\b', s, re.IGNORECASE)), "")
-                    new_rows.append({"vocab": w, "phrase": context})
-                
-                if new_rows:
-                    st.session_state.vocab_df = merge_new_words(st.session_state.vocab_df, new_rows)
-                    save_to_github(st.session_state.vocab_df)
-                    st.success(f"✅ Extracted and added {len(new_rows)} words!")
-                    time.sleep(1); st.rerun()
 
 with tab2:
     if st.session_state.vocab_df.empty: st.info("Add words first!")
@@ -418,14 +399,13 @@ with tab2:
         if search: display_df = display_df[display_df['vocab'].str.contains(search, case=False)]
         if filter_new: display_df = display_df[display_df['status'] == 'New']
         
-        # Idea 1: Enhanced Data Grid using st.column_config
         edited = st.data_editor(
             display_df, 
             num_rows="dynamic", 
             use_container_width=True, 
             hide_index=True, 
             column_config={
-                "vocab": st.column_config.TextColumn("Vocab", disabled=True), # Protect primary key
+                "vocab": st.column_config.TextColumn("Vocab", disabled=True), 
                 "phrase": st.column_config.TextColumn("Phrase Context"),
                 "status": st.column_config.SelectboxColumn("Status", options=["New", "Done"], required=True),
                 "date_added": st.column_config.DateColumn("Date Added", disabled=True)
@@ -469,7 +449,6 @@ with tab3:
             else:
                 raw_notes = process_anki_data(subset, batch_size=batch_size)
                 
-                # Idea 7: Graceful Degradation Handling
                 if not raw_notes: 
                     st.error("❌ Generation failed completely. Check API Key or Rate Limits.")
                 else:
