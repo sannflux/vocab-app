@@ -478,7 +478,7 @@ with st.sidebar:
     st.divider()
     TARGET_LANG = st.selectbox("🎯 Target Language", ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"], index=0)
     # Model selection remains unchanged per oath
-    GEMINI_MODEL = st.selectbox("🤖 AI Model", ["gemini-1.5-flash", "gemini-1.5-pro-latest"], index=0, help="Model strings are preserved as per system directive.")
+    GEMINI_MODEL = st.selectbox("🤖 AI Model", ["gemini-2.5-flash-lite", "gemini-1.5-pro-latest"], index=0, help="Model strings are preserved as per system directive.")
     st.divider()
     if not st.session_state.vocab_df.empty:
         st.download_button("💾 Backup Database (CSV)", st.session_state.vocab_df.to_csv(index=False).encode('utf-8'), f"vocab_backup_{date.today()}.csv", "text/csv")
