@@ -1,0 +1,8 @@
+streamlit
+pandas
+PyGithub
+google-generativeai
+genanki
+gTTS
+tenacity
+
