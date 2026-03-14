@@ -209,7 +209,7 @@ def create_anki_package(notes_data, deck_name, include_audio=True):
     <div style='display:none'>{{Audio}}</div>{{Audio}}
     """
     
-    my_model = genanki.Model(model_id, 'CyberVocabModelV2', 
+    my_model = genanki.Model(model_id, 'CyberVocabModelV3', 
         fields=[{'name': 'Text'}, {'name': 'Pronunciation'}, {'name': 'Definition'}, {'name': 'Examples'}, {'name': 'Synonyms'}, {'name': 'Antonyms'}, {'name': 'Etymology'}, {'name': 'Audio'}],
         templates=[{'name': 'Cloze', 'qfmt': front_html, 'afmt': back_html}], css=CYBERPUNK_CSS, model_type=genanki.Model.CLOZE)
     
@@ -222,7 +222,6 @@ def create_anki_package(notes_data, deck_name, include_audio=True):
             audio_tag = ""
             if include_audio:
                 try:
-                    # Sanitize filename with hash to avoid Anki errors
                     safe_name = hashlib.md5(vocab.encode()).hexdigest() + ".mp3"
                     path = os.path.join(temp_dir, safe_name)
                     tts = gTTS(text=vocab, lang='en')
@@ -231,11 +230,14 @@ def create_anki_package(notes_data, deck_name, include_audio=True):
                     audio_tag = f"[sound:{safe_name}]"
                 except: pass
 
-            # Formatting
             v_cap = cap_first(vocab)
             raw_phrase = card.get("phrase", "")
             formatted_phrase = highlight_vocab(clean_text(raw_phrase), vocab) if raw_phrase else ""
-            display_text = f"{formatted_phrase}<br><br>{v_cap}: <b>{{{{c1::{card.get('translation','?')}}}}}}</b>"
+            
+            # FIXED SYNTAX: Avoiding nesting 6 braces in f-string
+            translation_val = card.get('translation', '?')
+            cloze_markup = "{{c1::" + str(translation_val) + "}}"
+            display_text = f"{formatted_phrase}<br><br>{v_cap}: <b>{cloze_markup}</b>"
             
             examples_html = "<ul>" + "".join([f"<li>{clean_text(e)}</li>" for e in card.get("example_sentences", [])]) + "</ul>"
             
@@ -253,7 +255,6 @@ def create_anki_package(notes_data, deck_name, include_audio=True):
         pkg = genanki.Package(my_deck)
         pkg.media_files = media_files
         buf = io.BytesIO()
-        pkg.write_to_dbtext(temp_dir) # Just to prep
         pkg.write_to_file(os.path.join(temp_dir, 'out.apkg'))
         with open(os.path.join(temp_dir, 'out.apkg'), 'rb') as f:
             buf.write(f.read())
@@ -294,7 +295,7 @@ with st.sidebar:
     st.divider()
     rpd = st.session_state.metadata["rpd_count"]
     st.metric("Daily AI Quota", f"{rpd}/{MAX_RPD}", f"{MAX_RPD - rpd} left")
-    st.progress(rpd / MAX_RPD)
+    st.progress(min(rpd / MAX_RPD, 1.0))
     
     if st.button("🔄 Force Sync Cloud"):
         st.session_state.vocab_df = load_data()
@@ -317,10 +318,11 @@ with tab1:
 
     if st.button("💾 Save to Cloud", use_container_width=True, type="primary"):
         if vocab_in:
-            new_row = pd.DataFrame([{"vocab": vocab_in.lower().strip(), "phrase": phrase_in.strip(), "status": "New"}])
+            v_final = vocab_in.lower().strip()
+            new_row = pd.DataFrame([{"vocab": v_final, "phrase": phrase_in.strip(), "status": "New"}])
             st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, new_row]).drop_duplicates('vocab', keep='last')
             save_data(st.session_state.vocab_df)
-            st.success(f"Added '{vocab_in}'")
+            st.success(f"Added '{v_final}'")
             time.sleep(1)
             st.rerun()
 
@@ -334,6 +336,7 @@ with tab2:
         df_disp, 
         num_rows="dynamic", 
         use_container_width=True,
+        hide_index=True,
         column_config={"status": st.column_config.SelectboxColumn("Status", options=["New", "Done"])}
     )
     if st.button("💾 Commit Changes"):
@@ -349,26 +352,25 @@ with tab3:
         st.info("No 'New' words found. Add some in Tab 1!")
     else:
         st.write(f"Found **{len(new_words)}** new words.")
-        deck_name = st.text_input("Deck Name", "My Cyber Vocab")
-        batch_size = st.slider("Words per AI call", 1, 10, 5)
+        deck_name_in = st.text_input("Deck Name", "-English Learning::Vocabulary")
+        batch_size_in = st.slider("Words per AI call", 1, 10, 5)
         
         if st.button("🚀 Start AI Generation", type="primary"):
             vocab_list = new_words[['vocab', 'phrase']].values.tolist()
-            ai_results = generate_anki_card_data_batched(vocab_list, TARGET_LANG, GEMINI_MODEL, batch_size)
+            ai_results = generate_anki_card_data_batched(vocab_list, TARGET_LANG, GEMINI_MODEL, batch_size_in)
             
             if ai_results:
-                pkg_buf = create_anki_package(ai_results, deck_name)
+                pkg_buf = create_anki_package(ai_results, deck_name_in)
                 st.download_button(
                     label="📥 Download .apkg File",
                     data=pkg_buf,
-                    file_name=f"{deck_name}_{date.today()}.apkg",
+                    file_name=f"Vocab_{date.today().strftime('%Y%m%d')}.apkg",
                     mime="application/octet-stream",
                     use_container_width=True
                 )
                 
                 # Mark as done
-                processed_vocabs = [c['vocab'] for c in ai_results]
+                processed_vocabs = [c.get('vocab').lower() for c in ai_results]
                 st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'].isin(processed_vocabs), 'status'] = 'Done'
                 save_data(st.session_state.vocab_df)
                 st.success("Cards generated! Words marked as 'Done' in cloud.")
-
