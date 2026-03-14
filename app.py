@@ -110,6 +110,12 @@ def fix_vocab_casing(phrase: str, vocab: str) -> str:
     return re.sub(pattern, vocab, phrase, flags=re.IGNORECASE)
 
 def robust_json_parse(text: str):
+    text = text.strip()
+    # Safely strip markdown formatting if Gemini includes it
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+        
     try:
         return json.loads(text)
     except:
@@ -280,7 +286,8 @@ def create_anki_package(notes_data, deck_name, generate_audio=True):
 def load_data():
     try:
         file_content = repo.get_contents("vocabulary.csv")
-        df = pd.read_csv(io.StringIO(file_content.decoded_content.decode('utf-8')))
+        # Enforce string types immediately upon load to prevent mixed type errors
+        df = pd.read_csv(io.StringIO(file_content.decoded_content.decode('utf-8')), dtype=str)
         df['phrase'] = df['phrase'].fillna(""); df['status'] = df.get('status', 'New')
         return df.sort_values(by="vocab", ignore_index=True)
     except GithubException as e: return pd.DataFrame(columns=['vocab', 'phrase', 'status']) if e.status == 404 else st.stop()
@@ -314,8 +321,9 @@ def save_single_word_callback():
             st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, pd.DataFrame([{"vocab": v, "phrase": p, "status": "New"}])], ignore_index=True)
         save_to_github(st.session_state.vocab_df)
         st.session_state.input_phrase = ""; st.session_state.input_vocab = ""
-        st.session_state.save_message = f"✅ Saved '{v}'!"
-    else: st.session_state.save_error = "⚠️ Enter a vocabulary word."
+        st.toast(f"✅ Saved '{v}'!", icon="🚀")
+    else: 
+        st.error("⚠️ Enter a vocabulary word.")
 
 if "input_phrase" not in st.session_state: st.session_state.input_phrase = ""
 if "input_vocab" not in st.session_state: st.session_state.input_vocab = ""
@@ -323,11 +331,11 @@ if "input_vocab" not in st.session_state: st.session_state.input_vocab = ""
 # ========================== SIDEBAR ==========================
 with st.sidebar:
     st.header("⚙️ Settings")
+    if "rpd_count" in st.session_state:
+        st.metric("🤖 Daily AI Usage", f"{st.session_state.rpd_count}/20")
     TARGET_LANG = st.selectbox("🎯 Definition Language", ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"], index=0)
     GEMINI_MODEL = st.selectbox("🤖 AI Model", ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"], index=0)
     st.divider()
-    if "rpd_count" in st.session_state:
-        st.metric("Daily AI Usage", f"{st.session_state.rpd_count}/20")
     if not st.session_state.vocab_df.empty:
         st.download_button("💾 Backup Database (CSV)", st.session_state.vocab_df.to_csv(index=False).encode('utf-8'), f"vocab_backup_{date.today()}.csv", "text/csv")
 
@@ -337,8 +345,6 @@ tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit / Review", "📇 Generate An
 with tab1:
     st.subheader("Add new word")
     add_mode = st.radio("Mode", ["Single", "Bulk"], horizontal=True, label_visibility="collapsed")
-    if "save_message" in st.session_state: st.success(st.session_state.save_message); del st.session_state.save_message
-    if "save_error" in st.session_state: st.error(st.session_state.save_error); del st.session_state.save_error
 
     if add_mode == "Single":
         p_raw = st.text_input("🔤 Phrase", placeholder="Paste your sentence here...", key="input_phrase")
