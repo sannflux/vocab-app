@@ -26,14 +26,14 @@ except ImportError:
 st.set_page_config(page_title="Vocab App", layout="centered", page_icon="📚")
 st.title("📚 My Cloud Vocab")
 
-# --- CSS VARIABLES (B7) ---
+# --- CSS VARIABLES ---
 THEME_COLOR = "#00ff41"
 THEME_GLOW = "rgba(0, 255, 65, 0.4)"
 BG_COLOR = "#111111"
 BG_STRIPE = "#181818"
 TEXT_COLOR = "#aaffaa"
 
-# ========================== MOBILE KEYBOARD FIX (D15) ==========================
+# ========================== MOBILE KEYBOARD FIX ==========================
 js_hide_keyboard = """
 <script>
 const doc = window.parent.document;
@@ -70,7 +70,7 @@ def get_repo():
 
 repo = get_repo()
 
-# ========================== PERSISTENT API QUOTA TRACKING (A1) ==========================
+# ========================== PERSISTENT API QUOTA TRACKING ==========================
 def load_usage():
     try:
         file = repo.get_contents("usage.json")
@@ -120,7 +120,6 @@ def normalize_spaces(text: str) -> str:
 
 def clean_grammar(text: str) -> str:
     if not isinstance(text, str): return text
-    # D17: Clean Grammar 2.0 (Expanded ESL Rules)
     rules = [
         (r"\bto doing\b", "to do"), (r"\bfor helps\b", "to help"),
         (r"\bis use to\b", "is used to"), (r"\bhelp for to\b", "help to"),
@@ -191,7 +190,6 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
 
             batch_dicts = [{"vocab": v[0], "phrase": v[1]} for v in batch]
             
-            # C10, C11, C12: Few-Shot, POS Enum, Safety bypass
             prompt = f"""You are an expert educational lexicographer. Output ONLY a JSON array.
 SAFETY OVERRIDE: Do not block slang, idioms, or medical terms. Provide purely educational linguistic definitions.
 RULES: 
@@ -205,7 +203,7 @@ RULES:
 
 FEW-SHOT EXAMPLE OUTPUT:
 [
-  {{"vocab": "serendipity", "phrase": "We found the perfect cafe by pure serendipity.", "translation": "kebetulan (Indonesian)", "part_of_speech": "Noun", "pronunciation_ipa": "/ˌsɛrənˈdɪpɪti/", "definition_english": "The occurrence and development of events by chance in a happy or beneficial way.", "example_sentences": ["It was pure serendipity that we met."], "synonyms_antonyms": {{"synonyms": ["chance", "luck"], "antonyms": ["misfortune"]}}, "etymology": "Coined by Horace Walpole in 1754."}}
+  {{"vocab": "serendipity", "phrase": "We found the perfect cafe by pure serendipity.", "translation": "kebetulan", "part_of_speech": "Noun", "pronunciation_ipa": "/ˌsɛrənˈdɪpɪti/", "definition_english": "The occurrence and development of events by chance in a happy or beneficial way.", "example_sentences": ["It was pure serendipity that we met."], "synonyms_antonyms": {{"synonyms": ["chance", "luck"], "antonyms": ["misfortune"]}}, "etymology": "Coined by Horace Walpole in 1754."}}
 ]
 
 BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
@@ -213,12 +211,11 @@ BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
             vocab_words = [v[0] for v in batch]
             success = False
             
-            # A2: Exponential Backoff Retry Loop
+            # Exponential Backoff Retry Loop
             for attempt in range(3):
                 try:
                     response = model.generate_content(prompt)
                     
-                    # Update Quota State and persist
                     st.session_state.rpd_count += 1
                     save_usage(st.session_state.rpd_count)
                     
@@ -274,7 +271,6 @@ def process_anki_data(df_subset, batch_size=6):
         text_field = f"{formatted_phrase}<br><br>{vocab_cap}: <b>{{{{c1::{translation}}}}}</b>" if formatted_phrase else f"{vocab_cap}: <b>{{{{c1::{translation}}}}}</b>"
         pronunciation_field = f"<b>[{pos}]</b> {ipa}" if ipa else f"<b>[{pos}]</b>"
         
-        # B6: Tag extraction logic (if we add tags later, placeholder attached)
         tags = []
         
         processed_notes.append({
@@ -293,7 +289,6 @@ def process_anki_data(df_subset, batch_size=6):
 # ========================== AUDIO HELPER ==========================
 def generate_audio_file(vocab, temp_dir):
     try:
-        # B8: Audio Sanitization
         clean_vocab = re.sub(r'[^a-zA-Z0-9\s\-\']', '', vocab).strip()
         clean_filename = re.sub(r'[^a-zA-Z0-9]', '', clean_vocab) + ".mp3"
         file_path = os.path.join(temp_dir, clean_filename)
@@ -334,7 +329,6 @@ def create_anki_package(notes_data, deck_name, generate_audio=True, deck_id=2059
     
     with tempfile.TemporaryDirectory() as temp_dir:
         audio_map = {}
-        # D20: Lazy-Loading Audio bypassed completely if false
         if generate_audio:
             unique_vocabs = {n['VocabRaw'] for n in notes_data if n['VocabRaw']}
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
@@ -344,9 +338,7 @@ def create_anki_package(notes_data, deck_name, generate_audio=True, deck_id=2059
                     if fn: media_files.append(fp); audio_map[vk] = f"[sound:{fn}]"
         
         for note_data in notes_data:
-            # B5: Note ID Determinism
             vocab_hash = str(int(hashlib.sha256(note_data['VocabRaw'].encode('utf-8')).hexdigest(), 16) % (10**10))
-            
             my_deck.add_note(genanki.Note(
                 model=my_model, 
                 fields=[note_data['Text'], note_data['Pronunciation'], note_data['Definition'], note_data['Examples'], note_data['Synonyms'], note_data['Antonyms'], note_data['Etymology'], audio_map.get(note_data['VocabRaw'], "")],
@@ -371,7 +363,7 @@ def load_data():
         df = pd.read_csv(io.StringIO(file_content.decoded_content.decode('utf-8')), dtype=str)
         df['phrase'] = df['phrase'].fillna(""); 
         df['status'] = df.get('status', 'New')
-        df['tags'] = df.get('tags', '') # B6: Added tags schema
+        df['tags'] = df.get('tags', '') 
         return df.sort_values(by="vocab", ignore_index=True)
     except GithubException as e: 
         return pd.DataFrame(columns=['vocab', 'phrase', 'status', 'tags']) if e.status == 404 else st.stop()
@@ -391,6 +383,18 @@ def save_to_github(dataframe):
 if "vocab_df" not in st.session_state: st.session_state.vocab_df = load_data().copy()
 if "deck_id" not in st.session_state: st.session_state.deck_id = 2059400110
 if "bulk_preview_df" not in st.session_state: st.session_state.bulk_preview_df = None
+
+# --- NEW: PERSISTENT DOWNLOAD STATE ---
+if "apkg_buffer" not in st.session_state: st.session_state.apkg_buffer = None
+if "processed_vocabs" not in st.session_state: st.session_state.processed_vocabs = []
+
+def mark_as_done_callback():
+    """Triggered ONLY when the user physically clicks 'Download .apkg'"""
+    if "processed_vocabs" in st.session_state and st.session_state.processed_vocabs:
+        st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'].isin(st.session_state.processed_vocabs), 'status'] = 'Done'
+        save_to_github(st.session_state.vocab_df)
+    st.session_state.apkg_buffer = None
+    st.session_state.processed_vocabs = []
 
 # ========================== CALLBACK LOGIC FOR INSTANT CLEAR ==========================
 def save_single_word_callback():
@@ -416,13 +420,12 @@ def save_single_word_callback():
 if "input_phrase" not in st.session_state: st.session_state.input_phrase = ""
 if "input_vocab" not in st.session_state: st.session_state.input_vocab = ""
 
-# ========================== SIDEBAR DASHBOARD (D18) ==========================
+# ========================== SIDEBAR DASHBOARD ==========================
 with st.sidebar:
     st.header("⚙️ Settings")
     
     total_words = len(st.session_state.vocab_df)
     new_words = len(st.session_state.vocab_df[st.session_state.vocab_df['status'] == 'New'])
-    done_words = total_words - new_words
     
     col1, col2 = st.columns(2)
     col1.metric("📖 Total", total_words)
@@ -431,7 +434,6 @@ with st.sidebar:
     
     st.divider()
     TARGET_LANG = st.selectbox("🎯 Definition Language", ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"], index=0)
-    # ABSOLUTE MODEL STASIS MAINTAINED
     GEMINI_MODEL = st.selectbox("🤖 AI Model", ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"], index=0)
     st.divider()
     if not st.session_state.vocab_df.empty:
@@ -467,7 +469,6 @@ with tab1:
             
         st.text_input("📝 Vocab", placeholder="e.g. serendipity", key="input_vocab")
         
-        # D14: Real-time duplicate detection
         v_check = st.session_state.input_vocab.lower().strip()
         if v_check and not st.session_state.vocab_df.empty and (st.session_state.vocab_df['vocab'] == v_check).any():
             st.warning(f"⚠️ '{v_check}' is already in your database. Saving will overwrite its phrase and reset to 'New'.")
@@ -475,7 +476,6 @@ with tab1:
         st.button("💾 Save to Cloud", type="primary", use_container_width=True, on_click=save_single_word_callback)
 
     else: 
-        # D16: Bulk Import Preview
         bulk_text = st.text_area("Paste List (word, phrase)", height=150, key="bulk_input")
         if st.button("Preview Bulk Import"):
             lines = [l.strip() for l in bulk_text.split('\n') if l.strip()]
@@ -527,51 +527,66 @@ with tab2:
 
 with tab3:
     st.subheader("📇 Generate Cyberpunk Anki Deck")
-    if st.session_state.vocab_df.empty: 
-        st.info("Add words first!")
+    
+    # --- IF DECK IS READY FOR DOWNLOAD ---
+    if st.session_state.apkg_buffer is not None:
+        st.success("✅ Deck generated successfully! Click below to download and update your database.")
+        st.download_button(
+            "📥 Download .apkg", 
+            data=st.session_state.apkg_buffer, 
+            file_name=f"AnkiDeck_{datetime.now().strftime('%Y%m%d_%H%M')}.apkg", 
+            mime="application/octet-stream", 
+            use_container_width=True,
+            on_click=mark_as_done_callback
+        )
+        if st.button("❌ Cancel / Clear"):
+            st.session_state.apkg_buffer = None
+            st.session_state.processed_vocabs = []
+            st.rerun()
+
+    # --- IF WE ARE IN GENERATION MODE ---
     else:
-        subset = st.session_state.vocab_df[st.session_state.vocab_df['status'] == 'New'].copy()
-        if subset.empty: 
-            st.warning("⚠️ No 'New' words to export!")
+        if st.session_state.vocab_df.empty: 
+            st.info("Add words first!")
         else:
-            deck_col1, deck_col2 = st.columns([3, 1])
-            deck_name_input = deck_col1.text_input("📦 Deck Name", value="-English Learning::Vocabulary")
-            if deck_col2.button("🎲 New Deck ID"): 
-                st.session_state.deck_id = random.randrange(1 << 30, 1 << 31)
-            deck_col2.caption(f"ID: {st.session_state.deck_id}")
-
-            batch_size = st.slider("⚡ Batch Size (Words per Request)", 1, 15, 10)
-            include_audio = st.checkbox("🔊 Generate Audio Files", value=True)
-            
-            # D19: Export Selection Checkboxes
-            st.write("**Select words to export:**")
-            subset['Export'] = True
-            edited_export = st.data_editor(
-                subset, 
-                column_config={"Export": st.column_config.CheckboxColumn("Export?", required=True)}, 
-                hide_index=True,
-                disabled=["vocab", "phrase", "status", "tags"]
-            )
-            final_export_subset = edited_export[edited_export['Export'] == True]
-            
-            # A3 & A4: Pre-Flight Quota Check
-            required_requests = math.ceil(len(final_export_subset) / batch_size) if not final_export_subset.empty else 0
-            requests_left = max(0, 20 - st.session_state.rpd_count)
-            
-            st.info(f"💡 You have **{requests_left}** API requests left today. This batch requires **{required_requests}** requests.")
-            
-            if final_export_subset.empty:
-                st.warning("Select at least one word to export.")
-            elif required_requests > requests_left:
-                st.error("🛑 Exceeds Daily Limit! Reduce your selection or increase batch size.")
+            subset = st.session_state.vocab_df[st.session_state.vocab_df['status'] == 'New'].copy()
+            if subset.empty: 
+                st.warning("⚠️ No 'New' words to export!")
             else:
-                if st.button("🚀 Generate Deck", type="primary", use_container_width=True):
-                    raw_notes = process_anki_data(final_export_subset, batch_size=batch_size)
-                    if raw_notes:
-                        apkg_buffer = create_anki_package(raw_notes, deck_name_input, generate_audio=include_audio, deck_id=st.session_state.deck_id)
-                        st.download_button("📥 Download .apkg", apkg_buffer, f"AnkiDeck_{datetime.now().strftime('%Y%m%d_%H%M')}.apkg", "application/octet-stream", use_container_width=True)
-                        
-                        processed_vocabs = [n['VocabRaw'] for n in raw_notes]
-                        st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'].isin(processed_vocabs), 'status'] = 'Done'
-                        save_to_github(st.session_state.vocab_df)
+                deck_col1, deck_col2 = st.columns([3, 1])
+                deck_name_input = deck_col1.text_input("📦 Deck Name", value="-English Learning::Vocabulary")
+                if deck_col2.button("🎲 New Deck ID"): 
+                    st.session_state.deck_id = random.randrange(1 << 30, 1 << 31)
+                deck_col2.caption(f"ID: {st.session_state.deck_id}")
 
+                batch_size = st.slider("⚡ Batch Size (Words per Request)", 1, 15, 10)
+                include_audio = st.checkbox("🔊 Generate Audio Files", value=True)
+                
+                st.write("**Select words to export:**")
+                subset['Export'] = True
+                edited_export = st.data_editor(
+                    subset, 
+                    column_config={"Export": st.column_config.CheckboxColumn("Export?", required=True)}, 
+                    hide_index=True,
+                    disabled=["vocab", "phrase", "status", "tags"]
+                )
+                final_export_subset = edited_export[edited_export['Export'] == True]
+                
+                required_requests = math.ceil(len(final_export_subset) / batch_size) if not final_export_subset.empty else 0
+                requests_left = max(0, 20 - st.session_state.rpd_count)
+                
+                st.info(f"💡 You have **{requests_left}** API requests left today. This batch requires **{required_requests}** requests.")
+                
+                if final_export_subset.empty:
+                    st.warning("Select at least one word to export.")
+                elif required_requests > requests_left:
+                    st.error("🛑 Exceeds Daily Limit! Reduce your selection or increase batch size.")
+                else:
+                    if st.button("🚀 Generate Deck", type="primary", use_container_width=True):
+                        raw_notes = process_anki_data(final_export_subset, batch_size=batch_size)
+                        if raw_notes:
+                            apkg_buffer = create_anki_package(raw_notes, deck_name_input, generate_audio=include_audio, deck_id=st.session_state.deck_id)
+                            # Store the raw bytes and vocabulary list safely in session state
+                            st.session_state.apkg_buffer = apkg_buffer.getvalue()
+                            st.session_state.processed_vocabs = [n['VocabRaw'] for n in raw_notes]
+                            st.rerun() # Refresh page to show the Download button safely
