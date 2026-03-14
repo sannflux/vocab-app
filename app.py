@@ -292,7 +292,7 @@ if "pending_queue" not in st.session_state: st.session_state.pending_queue = []
 with st.sidebar:
     st.header("⚙️ Configuration")
     TARGET_LANG = st.selectbox("🎯 Target Language", ["Indonesian", "Spanish", "French", "German", "Japanese"], index=0)
-    GEMINI_MODEL = st.selectbox("🤖 Model", ["gemini-1.5-flash-latest", "gemini-2.0-flash-exp"], index=0)
+    GEMINI_MODEL = st.selectbox("🤖 Model", ["gemini-1.5-flash-latest", "gemini-2.5-flash-lite"], index=0)
     SELECTED_THEME = st.selectbox("🎨 Anki Theme", list(THEMES.keys()), index=0)
     SELECTED_ACCENT = st.selectbox("🗣️ Audio Accent", list(ACCENTS.keys()), index=0)
     st.divider()
