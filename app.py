@@ -25,6 +25,14 @@ except ImportError:
 st.set_page_config(page_title="Vocab App", layout="centered", page_icon="📚")
 st.title("📚 My Cloud Vocab")
 
+# --- GLOBAL SESSION STATE INITIALIZATION ---
+if "rpd_count" not in st.session_state: st.session_state.rpd_count = 0
+if "TARGET_LANG" not in st.session_state: st.session_state.TARGET_LANG = "Indonesian"
+if "GEMINI_MODEL" not in st.session_state: st.session_state.GEMINI_MODEL = "gemini-2.5-flash-lite"
+if "input_phrase" not in st.session_state: st.session_state.input_phrase = ""
+if "input_vocab" not in st.session_state: st.session_state.input_vocab = ""
+if "last_v_selected" not in st.session_state: st.session_state.last_v_selected = ""
+
 # ========================== MOBILE KEYBOARD FIX ==========================
 js_hide_keyboard = """
 <script>
@@ -130,16 +138,12 @@ def speak_word(text: str, lang: str = "en-US"):
 
 # ========================== ASYNC BATCH GENERATOR ==========================
 def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
-    model = get_gemini_model(st.session_state.gemini_key, GEMINI_MODEL)
+    model = get_gemini_model(st.session_state.gemini_key, st.session_state.GEMINI_MODEL)
     if not model: return []
 
     all_card_data = []
     total_items = len(vocab_phrase_list)
     batches = [vocab_phrase_list[i:i + batch_size] for i in range(0, total_items, batch_size)]
-    
-    # RPD (Requests Per Day) Monitor
-    if "rpd_count" not in st.session_state:
-        st.session_state.rpd_count = 0
 
     with st.status("🤖 Processing AI Batches (RPM Throttled)...", expanded=True) as status_log:
         progress_bar = st.progress(0)
@@ -149,7 +153,7 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6):
                 st.warning("🛑 Daily AI Limit (20 requests) reached. Please try again tomorrow.")
                 break
             
-            # RPM (Requests Per Minute) Throttle: If not the first batch, wait to avoid 5 RPM limit
+            # RPM (Requests Per Minute) Throttle
             if idx > 0:
                 for remaining in range(12, 0, -1):
                     progress_bar.progress(idx / len(batches), text=f"⏳ Throttling for RPM limits... ({remaining}s)")
@@ -163,7 +167,8 @@ RULES:
 3. IF 'phrase' is normal text: Define based on that usage.
 4. IF 'phrase' is empty: Generate ONE simple sentence (max 12 words).
 5. EXACT vocab unchanged.
-OUTPUT FORMAT: [{{"vocab": "...", "phrase": "...", "translation": "{TARGET_LANG} meaning", "part_of_speech": "...", "pronunciation_ipa": "/.../", "definition_english": "...", "example_sentences": ["..."], "synonyms_antonyms": {{"synonyms": [], "antonyms": []}}, "etymology": "Plain text only."}}]
+6. 'translation' MUST strictly be the {st.session_state.TARGET_LANG} translation of the VOCAB WORD ONLY. DO NOT translate the entire 'phrase'.
+OUTPUT FORMAT: [{{"vocab": "...", "phrase": "...", "translation": "Strictly the {st.session_state.TARGET_LANG} meaning of the vocab word only", "part_of_speech": "...", "pronunciation_ipa": "/.../", "definition_english": "...", "example_sentences": ["..."], "synonyms_antonyms": {{"synonyms": [], "antonyms": []}}, "etymology": "Plain text only."}}]
 BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
 
             vocab_words = [v[0] for v in batch]
@@ -316,17 +321,20 @@ def save_single_word_callback():
         st.session_state.save_message = f"✅ Saved '{v}'!"
     else: st.session_state.save_error = "⚠️ Enter a vocabulary word."
 
-if "input_phrase" not in st.session_state: st.session_state.input_phrase = ""
-if "input_vocab" not in st.session_state: st.session_state.input_vocab = ""
-
 # ========================== SIDEBAR ==========================
 with st.sidebar:
     st.header("⚙️ Settings")
-    TARGET_LANG = st.selectbox("🎯 Definition Language", ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"], index=0)
-    GEMINI_MODEL = st.selectbox("🤖 AI Model", ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"], index=0)
+    
+    lang_opts = ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"]
+    if st.session_state.TARGET_LANG not in lang_opts: st.session_state.TARGET_LANG = lang_opts[0]
+    st.session_state.TARGET_LANG = st.selectbox("🎯 Definition Language", lang_opts, index=lang_opts.index(st.session_state.TARGET_LANG))
+    
+    model_opts = ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"]
+    if st.session_state.GEMINI_MODEL not in model_opts: st.session_state.GEMINI_MODEL = model_opts[0]
+    st.session_state.GEMINI_MODEL = st.selectbox("🤖 AI Model", model_opts, index=model_opts.index(st.session_state.GEMINI_MODEL))
+    
     st.divider()
-    if "rpd_count" in st.session_state:
-        st.metric("Daily AI Usage", f"{st.session_state.rpd_count}/20")
+    st.metric("Daily AI Usage", f"{st.session_state.rpd_count}/20")
     if not st.session_state.vocab_df.empty:
         st.download_button("💾 Backup Database (CSV)", st.session_state.vocab_df.to_csv(index=False).encode('utf-8'), f"vocab_backup_{date.today()}.csv", "text/csv")
 
@@ -357,8 +365,11 @@ with tab1:
                         if cols[i % 6].checkbox(w, key=f"chk_{w}"): selected_words.append(w)
                     v_selected = " ".join(selected_words)
         
-        if v_selected and v_selected != st.session_state.input_vocab:
+        # Only overwrite the input_vocab state if the pill selection actually changed
+        if v_selected != st.session_state.last_v_selected:
             st.session_state.input_vocab = v_selected
+            st.session_state.last_v_selected = v_selected
+
         st.text_input("📝 Vocab", placeholder="e.g. serendipity", key="input_vocab")
         st.button("💾 Save to Cloud", type="primary", use_container_width=True, on_click=save_single_word_callback)
 
@@ -397,14 +408,33 @@ with tab3:
         deck_name_input = st.text_input("📦 Deck Name", value="-English Learning::Vocabulary")
         batch_size = st.slider("⚡ Batch Size (Words per Request)", 1, 15, 10)
         include_audio = st.checkbox("🔊 Audio", value=True)
+        
+        # State-Gated Generation
         if st.button("🚀 Generate Deck", type="primary", use_container_width=True):
             subset = st.session_state.vocab_df[st.session_state.vocab_df['status'] == 'New']
-            if subset.empty: st.warning("⚠️ No 'New' words!")
+            if subset.empty: 
+                st.warning("⚠️ No 'New' words!")
             else:
                 raw_notes = process_anki_data(subset, batch_size=batch_size)
                 if raw_notes:
                     apkg_buffer = create_anki_package(raw_notes, deck_name_input, generate_audio=include_audio)
-                    st.download_button("📥 Download .apkg", apkg_buffer, f"AnkiDeck_{datetime.now().strftime('%Y%m%d_%H%M')}.apkg", "application/octet-stream", use_container_width=True)
+                    
+                    # Save to persistent session state instead of transient block
+                    st.session_state.anki_package = apkg_buffer.getvalue() 
+                    st.session_state.anki_filename = f"AnkiDeck_{datetime.now().strftime('%Y%m%d_%H%M')}.apkg"
+                    
+                    # Update GitHub database status
                     processed_vocabs = [n['VocabRaw'] for n in raw_notes]
                     st.session_state.vocab_df.loc[st.session_state.vocab_df['vocab'].isin(processed_vocabs), 'status'] = 'Done'
                     save_to_github(st.session_state.vocab_df)
+                    st.success("✅ Generation Complete! Click below to download your deck.")
+
+        # The Download button renders OUTSIDE the generate button, preventing it from vanishing
+        if "anki_package" in st.session_state:
+            st.download_button(
+                "📥 Download .apkg", 
+                st.session_state.anki_package, 
+                st.session_state.anki_filename, 
+                "application/octet-stream", 
+                use_container_width=True
+            )
