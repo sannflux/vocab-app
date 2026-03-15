@@ -1140,21 +1140,32 @@ with tab2:
         )
 
         if st.button("💾 Save Changes", type="primary", use_container_width=True):
-            existing_mask  = edited.index.isin(st.session_state.vocab_df.index)
+            # ── Explicit copy + reassignment ─────────────────────────────────
+            # DataFrame.update() mutates in-place; Streamlit cannot detect
+            # in-place mutations as session-state changes.  We copy, apply
+            # edits column-by-column, then reassign — guaranteeing detection.
+            updated_df    = st.session_state.vocab_df.copy()
+            existing_mask = edited.index.isin(updated_df.index)
             existing_edits = edited[existing_mask]
             new_rows       = edited[~existing_mask]
-            st.session_state.vocab_df.update(existing_edits)
+
+            # Apply each edited column explicitly so empty-string clears work
+            for col in existing_edits.columns:
+                updated_df.loc[existing_edits.index, col] = existing_edits[col].values
+
             if not new_rows.empty:
                 if 'date_added' not in new_rows.columns:
                     new_rows = new_rows.copy()
                     new_rows['date_added'] = str(date.today())
-                st.session_state.vocab_df = pd.concat(
-                    [st.session_state.vocab_df, new_rows], ignore_index=True
-                )
+                updated_df = pd.concat([updated_df, new_rows], ignore_index=True)
+
+            # Explicit reassignment — Streamlit detects this as a state change
+            st.session_state.vocab_df = updated_df
+
             ok = save_to_github(st.session_state.vocab_df)
             if ok:
                 st.toast("✅ Cloud updated!")
-                st.rerun()   # full rerun → refreshes sidebar metrics
+                st.rerun()
 
         with st.expander("🔄 Reset 'Done' words back to 'New'"):
             done_count = len(st.session_state.vocab_df[st.session_state.vocab_df['status'] == 'Done'])
