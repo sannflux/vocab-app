@@ -197,30 +197,19 @@ def enforce_rpm():
     st.session_state.rpm_timestamps.append(datetime.now())
     # ✅ No save_minute_usage() here — called once per batch run to prevent GitHub I/O storm.
 
-# ========================== GEMINI MODEL (system_instruction + response_schema) ==========================
+# ========================== GEMINI MODEL ==========================
 @st.cache_resource
 def get_gemini_model(api_key: str, model_name: str):
-    """Enhancements #16 (system_instruction) + #17 (response_schema with fallback)."""
+    """system_instruction kept for token efficiency. response_schema removed —
+    on the free tier it adds server-side validation overhead that increases
+    queue latency noticeably. JSON mime_type alone is sufficient."""
     try:
         genai.configure(api_key=api_key)
-        # Try with structured response_schema first
-        try:
-            return genai.GenerativeModel(
-                model_name,
-                system_instruction=SYSTEM_INSTRUCTION,
-                generation_config=genai.GenerationConfig(
-                    response_mime_type="application/json",
-                    response_schema=CARD_RESPONSE_SCHEMA,
-                    temperature=0.1
-                )
-            )
-        except Exception:
-            # Graceful fallback: no schema, but keep system_instruction
-            return genai.GenerativeModel(
-                model_name,
-                system_instruction=SYSTEM_INSTRUCTION,
-                generation_config={"response_mime_type": "application/json", "temperature": 0.1}
-            )
+        return genai.GenerativeModel(
+            model_name,
+            system_instruction=SYSTEM_INSTRUCTION,
+            generation_config={"response_mime_type": "application/json", "temperature": 0.1}
+        )
     except Exception as e:
         st.error(f"❌ Gemini key error: {e}")
         return None
@@ -243,29 +232,29 @@ def validate_api_key(api_key: str, model_name: str) -> bool:
         st.session_state.api_key_validated_key = cache_key
         return False
 
-# ========================== TENACITY RETRY WRAPPER (Enhancement #5) ==========================
+# ========================== GEMINI CALL ==========================
+# The ONLY correct way to timeout a Gemini SDK call is request_options={"timeout": N}.
+# This sets a real HTTP-level deadline — the connection is torn down by the SDK itself.
+# ThreadPoolExecutor.shutdown(wait=True) — our previous approach — actually made hangs
+# WORSE: the wrapper raised TimeoutError but then blocked waiting for the thread to
+# finish, because generate_content() has no cancellation mechanism. Net result: same
+# infinite hang, just with an extra error message.
+GEMINI_TIMEOUT_SEC = 55   # generous ceiling for free-tier cold starts
+
 def _is_rate_limit(exc: BaseException) -> bool:
     return "429" in str(exc)
 
-# Hard wall-clock timeout — free tier can hang indefinitely without this.
-GEMINI_TIMEOUT_SEC = 45
-
 def _raw_gemini_call(model, prompt: str):
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-        future = ex.submit(model.generate_content, prompt)
-        try:
-            return future.result(timeout=GEMINI_TIMEOUT_SEC)
-        except concurrent.futures.TimeoutError:
-            raise TimeoutError(
-                f"Gemini did not respond within {GEMINI_TIMEOUT_SEC}s — "
-                "free-tier queue may be overloaded. Please retry."
-            )
+    return model.generate_content(
+        prompt,
+        request_options={"timeout": GEMINI_TIMEOUT_SEC}   # real HTTP timeout
+    )
 
 if TENACITY_AVAILABLE:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=20, max=60),
-        retry=retry_if_exception(_is_rate_limit),   # ONLY retries on 429, not timeouts
+        retry=retry_if_exception(_is_rate_limit),   # retry ONLY on 429, not timeouts
         reraise=True
     )
     def _call_gemini(model, prompt: str):
