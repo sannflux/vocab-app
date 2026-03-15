@@ -45,8 +45,8 @@ doc.addEventListener('keydown', function(e) {
 
 # ========================== SECRETS ==========================
 try:
-    token             = st.secrets["GITHUB_TOKEN"]
-    repo_name         = st.secrets["REPO_NAME"]
+    token              = st.secrets["GITHUB_TOKEN"]
+    repo_name          = st.secrets["REPO_NAME"]
     DEFAULT_GEMINI_KEY = st.secrets["GEMINI_API_KEY"]
 except KeyError as e:
     st.error(f"❌ Missing Secret: {e}. Check your .streamlit/secrets.toml")
@@ -54,31 +54,80 @@ except KeyError as e:
 
 # ========================== B8: MODULE-LEVEL PRE-COMPILED REGEX ==========================
 # All patterns compiled ONCE at import time — zero recompilation cost per call.
-_RE_SPACES         = re.compile(r"\s+")
-_RE_SENT_SPLIT     = re.compile(r'(?<=[.!?])\s+')
-_RE_JSON_FENCE_S   = re.compile(r"^```(?:json)?\s*")
-_RE_JSON_FENCE_E   = re.compile(r"\s*```$")
-_RE_JSON_ARRAY     = re.compile(r'\[.*\]', re.DOTALL)
-_RE_CLEAN_TEXT     = re.compile(r'[^\w\s\-\']')
-_RE_CLEAN_FNAME    = re.compile(r'[^a-zA-Z0-9]')
-_RE_AUDIO_CLEAN    = re.compile(r'[^a-zA-Z0-9\s\-\']')
+_RE_SPACES       = re.compile(r"\s+")
+_RE_SENT_SPLIT   = re.compile(r'(?<=[.!?])\s+')
+_RE_JSON_FENCE_S = re.compile(r"^```(?:json)?\s*")
+_RE_JSON_FENCE_E = re.compile(r"\s*```$")
+_RE_JSON_ARRAY   = re.compile(r'\[.*\]', re.DOTALL)
+_RE_CLEAN_TEXT   = re.compile(r'[^\w\s\-\']')
+_RE_CLEAN_FNAME  = re.compile(r'[^a-zA-Z0-9]')
+_RE_AUDIO_CLEAN  = re.compile(r'[^a-zA-Z0-9\s\-\']')
+_RE_DECK_ILLEGAL = re.compile(r'[<>"/\\|?*]')   # T2-B: deck name validation (colons allowed for ::)
 
 # Grammar rules: list of (compiled_pattern, replacement) — built once.
 _GRAMMAR_RULES = [
-    (re.compile(r"\bto doing\b",     re.IGNORECASE), "to do"),
-    (re.compile(r"\bfor helps\b",    re.IGNORECASE), "to help"),
-    (re.compile(r"\bis use to\b",    re.IGNORECASE), "is used to"),
-    (re.compile(r"\bhelp for to\b",  re.IGNORECASE), "help to"),
-    (re.compile(r"\bfor to\b",       re.IGNORECASE), "to"),
-    (re.compile(r"\bcan able to\b",  re.IGNORECASE), "can"),
-    (re.compile(r"\bI am agree\b",   re.IGNORECASE), "I agree"),
-    (re.compile(r"\bdiscuss about\b",re.IGNORECASE), "discuss"),
-    (re.compile(r"\breturn back\b",  re.IGNORECASE), "return"),
+    (re.compile(r"\bto doing\b",      re.IGNORECASE), "to do"),
+    (re.compile(r"\bfor helps\b",     re.IGNORECASE), "to help"),
+    (re.compile(r"\bis use to\b",     re.IGNORECASE), "is used to"),
+    (re.compile(r"\bhelp for to\b",   re.IGNORECASE), "help to"),
+    (re.compile(r"\bfor to\b",        re.IGNORECASE), "to"),
+    (re.compile(r"\bcan able to\b",   re.IGNORECASE), "can"),
+    (re.compile(r"\bI am agree\b",    re.IGNORECASE), "I agree"),
+    (re.compile(r"\bdiscuss about\b", re.IGNORECASE), "discuss"),
+    (re.compile(r"\breturn back\b",   re.IGNORECASE), "return"),
 ]
+
+# ========================== T3-C: SUBJECT PERSONAS (module-level constant) ==========================
+# Evaluated once at import time. Each value is a ≤30-token prefix injected into the prompt.
+PERSONAS: dict[str, str] = {
+    "General":           "",
+    "Medical":           "You are a medical lexicographer. Use precise clinical terminology. ",
+    "Legal":             "You are a legal lexicographer. Use precise juridical definitions. ",
+    "Coding / Tech":     "You are a software-engineering lexicographer. Use technical CS context. ",
+    "Language Learning": "You are an EFL/ESL teacher. Prioritize learner-friendly definitions and natural example sentences. ",
+}
+
+# ========================== A4: CYBERPUNK CSS (module-level constant — evaluated once) ==========================
+CYBERPUNK_CSS = f"""
+.card {{
+    font-family: 'Roboto Mono', 'Consolas', monospace;
+    font-size: 18px; line-height: 1.5;
+    color: {THEME_COLOR}; background-color: {BG_COLOR};
+    background-image: repeating-linear-gradient(
+        0deg, {BG_STRIPE}, {BG_STRIPE} 1px, {BG_COLOR} 1px, {BG_COLOR} 20px
+    );
+    padding: 30px 20px; text-align: left;
+}}
+.vellum-focus-container {{
+    background: #0d0d0d; padding: 30px 20px; margin: 0 auto 40px;
+    border: 2px solid {THEME_COLOR};
+    box-shadow: 0 0 5px {THEME_COLOR}, 0 0 15px {THEME_GLOW};
+    text-align: center;
+}}
+.prompt-text {{
+    font-family: 'Electrolize', sans-serif; font-size: 1.8em; font-weight: 900;
+    color: #ffffff;
+    text-shadow: 1px 1px 0 #ff00ff, -1px -1px 0 #00ffff;
+}}
+.cloze {{ color: {BG_COLOR}; background-color: {THEME_COLOR}; padding: 2px 4px; }}
+.solved-text .cloze {{
+    color: #ff00ff; background: none;
+    border-bottom: 3px double #00ffff; text-shadow: 0 0 5px #ff00ff;
+}}
+.vellum-section {{ margin: 15px 0; padding: 10px 0; border-bottom: 1px dashed {THEME_COLOR}; }}
+.section-header {{
+    font-weight: 600; color: #00ffff;
+    border-left: 3px solid {THEME_COLOR}; padding-left: 10px;
+}}
+.content {{ color: {TEXT_COLOR}; padding-left: 13px; }}
+@media (max-width: 480px) {{
+    .card {{ font-size: 16px; padding: 15px; }}
+    .vellum-focus-container {{ padding: 15px; }}
+}}
+"""
 
 # ========================== C12: BACKGROUND GITHUB EXECUTOR ==========================
 # @st.cache_resource ensures ONE executor survives across all Streamlit reruns.
-# GitHub writes are submitted as fire-and-forget tasks — never block the hot path.
 @st.cache_resource
 def _get_gh_executor():
     return concurrent.futures.ThreadPoolExecutor(
@@ -145,12 +194,12 @@ def save_minute_usage(timestamps: list):
     """B6: Non-blocking — submits to background executor instantly."""
     _get_gh_executor().submit(_bg_save_minute_usage, list(timestamps))
 
-# ========================== A5 + C11: SMART RPM ENFORCEMENT ==========================
+# ========================== A5 + BUG FIX: SMART RPM ENFORCEMENT ==========================
 def enforce_rpm() -> float:
     """
     A5: Single st.empty() slot updated in-place — no accumulating st.warning() elements.
-    C11: Returns elapsed wait time (seconds) for C15 profiling.
-    B6: save_minute_usage fires non-blocking after enforcement.
+    BUG FIX: save_minute_usage fires after prune unconditionally to prevent stale timestamps.
+    Returns elapsed wait time (seconds) for C15 profiling.
     """
     t0  = time.perf_counter()
     now = datetime.now()
@@ -160,6 +209,8 @@ def enforce_rpm() -> float:
         ts for ts in st.session_state.rpm_timestamps
         if (now - ts).total_seconds() < 60
     ]
+    # BUG FIX: persist pruned list immediately — not only after sleep — to prevent stale state
+    save_minute_usage(st.session_state.rpm_timestamps)
 
     if len(st.session_state.rpm_timestamps) >= 5:
         sleep_total = 12
@@ -189,6 +240,7 @@ def get_gemini_model(api_key: str, model_name: str):
 
 # ========================== B8: CLEANING FUNCTIONS (pre-compiled patterns) ==========================
 def cap_first(s: str) -> str:
+    """Uppercase first char only — preserves interior casing unlike str.capitalize()."""
     s = str(s).strip()
     return s[0].upper() + s[1:] if s else s
 
@@ -242,10 +294,48 @@ def speak_word(text: str, lang: str = "en-US"):
         height=0
     )
 
+# ========================== T3-E BUG FIX: SHARED PHRASE NORMALIZER ==========================
+def normalize_phrase(p: str) -> str:
+    """
+    T3-E: Single source-of-truth for phrase normalization used in BOTH
+    save_single_word_callback() and the bulk import path.
+
+    Fixes two bugs from the original:
+      1. p.endswith((",")) — wrapping a single char in a tuple was redundant/fragile.
+      2. p.capitalize() — silently lowercased all chars after position 0.
+         Replaced with cap_first() which preserves interior casing.
+    """
+    p = p.strip()
+    if not p or p == "1" or p.startswith("*"):
+        return p
+    if p.endswith(","):
+        p = p[:-1] + "."
+    elif not p.endswith((".", "!", "?")):
+        p += "."
+    return cap_first(p)   # BUG FIX: was str.capitalize()
+
 # ========================== B10: SINGLE-PASS FIELD CLEANER ==========================
 def _clean_field(text: str) -> str:
     """B10: Chains normalize → grammar → cap_sentences → trailing_dot in one call."""
     return ensure_trailing_dot(cap_each_sentence(clean_grammar(normalize_spaces(text))))
+
+# ========================== T4-G: TPM TRACKING HELPERS ==========================
+def log_tpm_chars(char_count: int):
+    """T4-G: Records (timestamp, char_count) for the rolling 60s TPM gauge."""
+    st.session_state.tpm_log.append({"ts": datetime.now(), "chars": char_count})
+
+def get_rolling_tpm() -> int:
+    """
+    T4-G: Returns estimated token count used in the last 60 seconds.
+    Heuristic: ~4 characters per token (matches Gemini tokenisation closely).
+    Also prunes stale entries in-place.
+    """
+    now = datetime.now()
+    st.session_state.tpm_log = [
+        e for e in st.session_state.tpm_log
+        if (now - e["ts"]).total_seconds() < 60
+    ]
+    return sum(e["chars"] for e in st.session_state.tpm_log) // 4
 
 # ========================== C13 + C14: BATCH GENERATOR ==========================
 def generate_anki_card_data_batched(
@@ -258,6 +348,9 @@ def generate_anki_card_data_batched(
     model_name  = st.session_state.get("gemini_model_name", "gemini-2.5-flash-lite")
     model       = get_gemini_model(st.session_state.gemini_key, model_name)
     if not model: return []
+
+    # T3-C: Inject persona prefix from sidebar selection (PERSONAS dict is module-level constant)
+    persona_prefix = PERSONAS.get(st.session_state.get("persona", "General"), "")
 
     # C14: Per-word deduplication — skip anything already in the session word cache
     word_cache     = st.session_state.get("word_cache", {})
@@ -287,16 +380,20 @@ def generate_anki_card_data_batched(
         for idx, batch in enumerate(batches):
             if st.session_state.rpd_count >= 20:
                 st.warning("🛑 Daily AI Limit (20 requests) reached. Try again tomorrow.")
+                # T1-B: mark remaining words as failed
+                for vp in batch:
+                    st.session_state.failed_words.append(vp[0])
                 break
 
-            # A5 + C11: non-multiplying countdown, returns elapsed for C15
+            # A5: non-multiplying countdown, returns elapsed for C15
             t_rpm = enforce_rpm()
 
             batch_dicts = [{"vocab": v[0], "phrase": v[1]} for v in batch]
             vocab_words = [v[0] for v in batch]
 
-            # C13: Compressed to 2 most-distinct few-shots (~300 fewer tokens vs original 4)
-            prompt = f"""You are an expert educational lexicographer. Think step-by-step:
+            # C13: Compressed to 2 most-distinct few-shots (~300 fewer tokens vs original 4).
+            # T3-C: persona_prefix prepended to system instruction.
+            prompt = f"""{persona_prefix}You are an expert educational lexicographer. Think step-by-step:
 1. Identify primary sense from phrase or context.
 2. Generate accurate fields.
 3. Ensure JSON validity.
@@ -320,6 +417,9 @@ EXAMPLES:
 ]
 
 BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
+
+            # T4-G: Log prompt character count for rolling TPM estimate
+            log_tpm_chars(len(prompt))
 
             success     = False
             t_api_start = time.perf_counter()   # C15
@@ -349,18 +449,44 @@ BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
                         st.session_state.rpd_count += 1
                         save_usage(st.session_state.rpd_count)   # B7: non-blocking
 
+                        # T1-C: Safety block detection — check finish_reason before parsing
+                        if hasattr(response, 'candidates') and response.candidates:
+                            finish = str(response.candidates[0].finish_reason)
+                            if finish in ("3", "SAFETY", "FinishReason.SAFETY"):
+                                st.warning(
+                                    f"🛡️ Safety filter blocked batch `{', '.join(vocab_words)}`. "
+                                    f"Skipping — will appear in failed list."
+                                )
+                                st.session_state.failed_words.extend(vocab_words)   # T1-B
+                                break
+
                         parsed = robust_json_parse(response.text)
-                        if isinstance(parsed, list) and len(parsed) == len(batch_dicts):
+
+                        # Allow partial batch recovery: accept any valid list items
+                        if isinstance(parsed, list) and len(parsed) > 0:
                             all_new_data.extend(parsed)
                             for card in parsed:
                                 word_cache[card['vocab'].strip().lower()] = card   # C14
-                            st.markdown(f"✅ **Batch {idx + 1}**: `{', '.join(vocab_words)}`")
+
+                            recovered = [c.get('vocab', '') for c in parsed]
+                            missed    = [v for v in vocab_words if v not in recovered]
+                            if missed:
+                                # T1-B: partial recovery — queue missed words
+                                st.session_state.failed_words.extend(missed)
+                                st.warning(
+                                    f"⚠️ Partial batch {idx + 1}: "
+                                    f"{len(parsed)}/{len(batch_dicts)} recovered. "
+                                    f"Missed: `{', '.join(missed)}`"
+                                )
+                            else:
+                                st.markdown(f"✅ **Batch {idx + 1}**: `{', '.join(vocab_words)}`")
                             success = True
                             break
+
                     except Exception as e:
                         if "429" in str(e):
                             backoff = 20 + (2 ** attempt) + random.uniform(0, 1)
-                            _slot = st.empty()   # C11: single in-place slot for 429 backoff
+                            _slot   = st.empty()   # C11: single in-place slot for 429 backoff
                             for r in range(int(backoff), 0, -1):
                                 _slot.warning(
                                     f"⚠️ 429 Rate Limit. Retrying in **{r}s**... "
@@ -381,8 +507,10 @@ BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
                 "cached":      False,
             })
 
+            # T1-B: Mark fully failed batches
             if not success and not dry_run:
-                st.error(f"❌ **Failed**: `{', '.join(vocab_words)}` — skipping to preserve quota")
+                st.error(f"❌ **Failed**: `{', '.join(vocab_words)}` — queued for retry")
+                st.session_state.failed_words.extend(vocab_words)
 
             progress_bar.progress((idx + 1) / len(batches))
 
@@ -405,8 +533,8 @@ BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
 # ========================== B9 + B10: PROCESS ANKI DATA ==========================
 def process_anki_data(
     df_subset: pd.DataFrame,
-    batch_size: int  = 6,
-    dry_run: bool    = False
+    batch_size: int = 6,
+    dry_run: bool   = False
 ) -> list:
     t0 = time.perf_counter()   # C15
 
@@ -418,9 +546,18 @@ def process_anki_data(
         st.info("♻️ Using cached processed notes — no re-generation needed.")
         return cached["notes"]
 
-    df_clean          = df_subset[df_subset['vocab'].astype(str).str.strip().str.len() > 0].copy()
-    vocab_phrase_list = df_clean[['vocab', 'phrase']].values.tolist()
-    all_card_data     = generate_anki_card_data_batched(
+    df_clean = df_subset[df_subset['vocab'].astype(str).str.strip().str.len() > 0].copy()
+
+    # T4-E BUG FIX: reindex guard prevents KeyError if 'phrase' column is missing
+    # (e.g. a freshly created CSV with only a 'vocab' column).
+    vocab_phrase_list = (
+        df_clean
+        .reindex(columns=['vocab', 'phrase'], fill_value='')
+        [['vocab', 'phrase']]
+        .values.tolist()
+    )
+
+    all_card_data = generate_anki_card_data_batched(
         vocab_phrase_list, batch_size=batch_size, dry_run=dry_run
     )
 
@@ -467,32 +604,34 @@ def process_anki_data(
         pron_field = f"<b>[{pos}]</b> {ipa}" if ipa else f"<b>[{pos}]</b>"
 
         processed_notes.append({
-            "VocabRaw":     vocab_raw,
-            "Text":         text_field,
-            "Pronunciation":pron_field,
-            "Definition":   eng_def,
-            "Examples":     ex_field,
-            "Synonyms":     synonyms,
-            "Antonyms":     antonyms,
-            "Etymology":    etymology,
-            "Tags":         [],
+            "VocabRaw":      vocab_raw,
+            "Text":          text_field,
+            "Pronunciation": pron_field,
+            "Definition":    eng_def,
+            "Examples":      ex_field,
+            "Synonyms":      synonyms,
+            "Antonyms":      antonyms,
+            "Etymology":     etymology,
+            "Tags":          [],   # Tags preserved as empty list (T2-D not selected)
         })
 
     st.session_state.processed_cache = {
         "key": cache_key, "notes": processed_notes, "time": datetime.now()
     }
-    st.caption(f"⏱️ `process_anki_data`: {time.perf_counter() - t0:.3f}s — {len(processed_notes)} notes")  # C15
+    st.caption(
+        f"⏱️ `process_anki_data`: {time.perf_counter() - t0:.3f}s — {len(processed_notes)} notes"
+    )  # C15
     return processed_notes
 
 # ========================== D17: AUDIO HELPER ==========================
 def generate_audio_file(args: tuple):
     """
     D17: Accepts (vocab, temp_dir) tuple for clean executor.map usage.
-    Regex pre-computation happens in the caller before the executor loop.
+    All filename regex uses module-level pre-compiled patterns (B8).
     """
     vocab, temp_dir = args
     try:
-        clean_vocab  = _RE_AUDIO_CLEAN.sub('', vocab).strip()   # B8
+        clean_vocab  = _RE_AUDIO_CLEAN.sub('', vocab).strip()          # B8
         clean_fname  = _RE_CLEAN_FNAME.sub('', clean_vocab) + ".mp3"   # B8
         file_path    = os.path.join(temp_dir, clean_fname)
         if clean_vocab:
@@ -502,52 +641,13 @@ def generate_audio_file(args: tuple):
         print(f"Audio error for {vocab}: {e}")
     return vocab, None, None
 
-# ========================== A4: CYBERPUNK CSS (module-level constant — evaluated once) ==========================
-CYBERPUNK_CSS = f"""
-.card {{
-    font-family: 'Roboto Mono', 'Consolas', monospace;
-    font-size: 18px; line-height: 1.5;
-    color: {THEME_COLOR}; background-color: {BG_COLOR};
-    background-image: repeating-linear-gradient(
-        0deg, {BG_STRIPE}, {BG_STRIPE} 1px, {BG_COLOR} 1px, {BG_COLOR} 20px
-    );
-    padding: 30px 20px; text-align: left;
-}}
-.vellum-focus-container {{
-    background: #0d0d0d; padding: 30px 20px; margin: 0 auto 40px;
-    border: 2px solid {THEME_COLOR};
-    box-shadow: 0 0 5px {THEME_COLOR}, 0 0 15px {THEME_GLOW};
-    text-align: center;
-}}
-.prompt-text {{
-    font-family: 'Electrolize', sans-serif; font-size: 1.8em; font-weight: 900;
-    color: #ffffff;
-    text-shadow: 1px 1px 0 #ff00ff, -1px -1px 0 #00ffff;
-}}
-.cloze {{ color: {BG_COLOR}; background-color: {THEME_COLOR}; padding: 2px 4px; }}
-.solved-text .cloze {{
-    color: #ff00ff; background: none;
-    border-bottom: 3px double #00ffff; text-shadow: 0 0 5px #ff00ff;
-}}
-.vellum-section {{ margin: 15px 0; padding: 10px 0; border-bottom: 1px dashed {THEME_COLOR}; }}
-.section-header {{
-    font-weight: 600; color: #00ffff;
-    border-left: 3px solid {THEME_COLOR}; padding-left: 10px;
-}}
-.content {{ color: {TEXT_COLOR}; padding-left: 13px; }}
-@media (max-width: 480px) {{
-    .card {{ font-size: 16px; padding: 15px; }}
-    .vellum-focus-container {{ padding: 15px; }}
-}}
-"""
-
 # ========================== GENANKI LOGIC ==========================
 def create_anki_package(
-    notes_data:      list,
-    deck_name:       str,
-    generate_audio:  bool = True,
-    deck_id:         int  = 2059400110,
-    include_antonyms:bool = True
+    notes_data:       list,
+    deck_name:        str,
+    generate_audio:   bool = True,
+    deck_id:          int  = 2059400110,
+    include_antonyms: bool = True
 ) -> io.BytesIO:
     t0 = time.perf_counter()   # C15
 
@@ -571,14 +671,20 @@ def create_anki_package(
 <div class="content">{{Synonyms}}</div></div>{{/Synonyms}}"""
 
     if include_antonyms:
-        back_html += """{{#Antonyms}}<div class="vellum-section">
+        back_html += """
+{{#Antonyms}}<div class="vellum-section">
 <div class="section-header">➖ ANTONYMS</div>
 <div class="content">{{Antonyms}}</div></div>{{/Antonyms}}"""
 
-    back_html += """{{#Etymology}}<div class="vellum-section">
+    # T2-A BUG FIX: removed bare {{Audio}} that appeared OUTSIDE the display:none wrapper.
+    # Original had two {{Audio}} renders → double playback on card flip in Anki.
+    # Now: single display:none wrapper is the only Audio render (triggers sound silently).
+    back_html += """
+{{#Etymology}}<div class="vellum-section">
 <div class="section-header">🏛️ ETYMOLOGY</div>
 <div class="content">{{Etymology}}</div></div>{{/Etymology}}
-<div style='display:none'>{{Audio}}</div></div>{{Audio}}"""
+<div style='display:none'>{{Audio}}</div>
+</div>"""
 
     model_id = st.session_state.get("model_id", 1607392319)
     my_model = genanki.Model(
@@ -593,7 +699,7 @@ def create_anki_package(
         css=CYBERPUNK_CSS,   # A4: module-level constant — no re-evaluation
         model_type=genanki.Model.CLOZE
     )
-    my_deck    = genanki.Deck(deck_id, deck_name)
+    my_deck     = genanki.Deck(deck_id, deck_name)
     media_files = []
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -604,7 +710,6 @@ def create_anki_package(
             unique_vocabs = {n['VocabRaw'] for n in notes_data if n['VocabRaw']}
 
             # D17: Build (vocab, temp_dir) tuples ONCE before the executor loop.
-            # All filename regex runs inside generate_audio_file using pre-compiled patterns.
             args_list = [(v, temp_dir) for v in unique_vocabs]
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as exc:
@@ -618,10 +723,17 @@ def create_anki_package(
                 f"for {len(unique_vocabs)} words"
             )
 
+        # T2-C: Track exported vocab hashes to power duplicate detection in Tab 3
+        exported_hashes = st.session_state.get("exported_hashes", set())
+
         for note_data in notes_data:
             guid_input = note_data['VocabRaw'] + deck_name
             vocab_hash = str(
                 int(hashlib.sha256(guid_input.encode('utf-8')).hexdigest(), 16) % (10 ** 10)
+            )
+            # T2-C: Register this vocab as exported using a 16-char SHA-256 prefix
+            exported_hashes.add(
+                hashlib.sha256(note_data['VocabRaw'].encode('utf-8')).hexdigest()[:16]
             )
             my_deck.add_note(genanki.Note(
                 model=my_model,
@@ -635,9 +747,11 @@ def create_anki_package(
                 guid=vocab_hash
             ))
 
-        my_package            = genanki.Package(my_deck)
+        st.session_state.exported_hashes = exported_hashes   # T2-C: persist back to session
+
+        my_package             = genanki.Package(my_deck)
         my_package.media_files = media_files
-        output_path           = os.path.join(temp_dir, 'output.apkg')
+        output_path            = os.path.join(temp_dir, 'output.apkg')
         my_package.write_to_file(output_path)
 
         buffer = io.BytesIO()
@@ -657,8 +771,10 @@ def load_data() -> pd.DataFrame:
             io.StringIO(file_content.decoded_content.decode('utf-8')), dtype=str
         )
         df['phrase'] = df['phrase'].fillna("")
-        df['status'] = df.get('status', 'New')
-        df['tags']   = df.get('tags', '')
+        # T3-A BUG FIX: df.get() is a dict method and cannot fill NaN column values.
+        # Replaced with column-existence check + fillna() for correct NaN handling.
+        df['status'] = df['status'].fillna('New') if 'status' in df.columns else 'New'
+        df['tags']   = df['tags'].fillna('')      if 'tags'   in df.columns else ''
         return df.sort_values(by="vocab", ignore_index=True)
     except GithubException as e:
         if e.status == 404:
@@ -687,25 +803,33 @@ def save_to_github(dataframe: pd.DataFrame) -> bool:
     return True
 
 # ========================== D18: SESSION STATE INIT (setdefault — single pass) ==========================
-st.session_state.setdefault("gemini_key",        DEFAULT_GEMINI_KEY)
-st.session_state.setdefault("vocab_df",          load_data().copy())
-st.session_state.setdefault("rpd_count",         load_usage())
-st.session_state.setdefault("rpm_timestamps",    load_minute_usage())
-st.session_state.setdefault("deck_id",           2059400110)
-st.session_state.setdefault("bulk_preview_df",   None)
-st.session_state.setdefault("apkg_buffer",       None)
-st.session_state.setdefault("processed_vocabs",  [])
-st.session_state.setdefault("model_id",          1607392319)
-st.session_state.setdefault("include_antonyms",  True)
-st.session_state.setdefault("dry_run",           False)
-st.session_state.setdefault("processed_cache",   {})
-st.session_state.setdefault("word_cache",        {})   # C14: per-word Gemini result cache
-st.session_state.setdefault("input_phrase",      "")
-st.session_state.setdefault("input_vocab",       "")
-st.session_state.setdefault("_quota_cache_key",  None)   # D20
-st.session_state.setdefault("_quota_cache",      (20, 0))
-st.session_state.setdefault("target_lang",       "Indonesian")
-st.session_state.setdefault("gemini_model_name", "gemini-2.5-flash-lite")
+st.session_state.setdefault("gemini_key",         DEFAULT_GEMINI_KEY)
+st.session_state.setdefault("vocab_df",           load_data().copy())
+st.session_state.setdefault("rpd_count",          load_usage())
+st.session_state.setdefault("rpm_timestamps",     load_minute_usage())
+st.session_state.setdefault("deck_id",            2059400110)
+st.session_state.setdefault("bulk_preview_df",    None)
+st.session_state.setdefault("apkg_buffer",        None)
+st.session_state.setdefault("processed_vocabs",   [])
+st.session_state.setdefault("model_id",           1607392319)
+st.session_state.setdefault("include_antonyms",   True)
+st.session_state.setdefault("dry_run",            False)
+st.session_state.setdefault("processed_cache",    {})
+st.session_state.setdefault("word_cache",         {})     # C14: per-word Gemini result cache
+st.session_state.setdefault("input_phrase",       "")
+st.session_state.setdefault("input_vocab",        "")
+st.session_state.setdefault("_quota_cache_key",   None)   # D20
+st.session_state.setdefault("_quota_cache",       (20, 0))
+st.session_state.setdefault("target_lang",        "Indonesian")
+st.session_state.setdefault("gemini_model_name",  "gemini-2.5-flash-lite")
+st.session_state.setdefault("persona",            "General")            # T3-C
+st.session_state.setdefault("tpm_log",            [])                   # T4-G
+st.session_state.setdefault("failed_words",       [])                   # T1-B
+st.session_state.setdefault("exported_hashes",    set())                # T2-C
+st.session_state.setdefault("preview_notes",      [])                   # T4-A
+st.session_state.setdefault("last_deck_name",     "-English Learning::Vocabulary")  # T1-B retry
+st.session_state.setdefault("last_batch_size",    6)                    # T1-B retry
+st.session_state.setdefault("model_id_confirm",   False)                # T2-E collision guard
 
 # ========================== CALLBACKS ==========================
 def mark_as_done_callback():
@@ -717,16 +841,14 @@ def mark_as_done_callback():
         save_to_github(st.session_state.vocab_df)
     st.session_state.apkg_buffer      = None
     st.session_state.processed_vocabs = []
+    st.session_state.preview_notes    = []   # T4-A: clear preview on download
 
 def save_single_word_callback():
     v     = st.session_state.input_vocab.lower().strip()
     p_raw = st.session_state.input_phrase
     if v:
-        p = p_raw.strip()
-        if p and p != "1" and not p.startswith("*"):
-            if p.endswith(","): p = p[:-1] + "."
-            elif not p.endswith((".", "!", "?")): p += "."
-            p = p.capitalize()
+        # T3-E BUG FIX: shared normalize_phrase() replaces inline logic
+        p    = normalize_phrase(p_raw)
         mask = st.session_state.vocab_df['vocab'] == v
         if not st.session_state.vocab_df.empty and mask.any():
             st.session_state.vocab_df.loc[mask, ['phrase', 'status']] = [p, 'New']
@@ -753,12 +875,22 @@ with st.sidebar:
     col2.metric("✨ New",   new_words)
     st.metric("🤖 Daily AI Usage", f"{st.session_state.rpd_count}/20 Requests")
 
+    # RPM + RPD progress bars (preserved)
     rpm_live = len([
         ts for ts in st.session_state.rpm_timestamps
         if (datetime.now() - ts).total_seconds() < 60
     ])
-    st.progress(rpm_live / 5,                       text=f"RPM Live: {rpm_live}/5 (last 60s)")
-    st.progress(st.session_state.rpd_count / 20,    text=f"RPD: {st.session_state.rpd_count}/20")
+    st.progress(rpm_live / 5,                     text=f"RPM Live: {rpm_live}/5 (last 60s)")
+    st.progress(st.session_state.rpd_count / 20,  text=f"RPD: {st.session_state.rpd_count}/20")
+
+    # T4-G: Rolling 60s TPM gauge with traffic-light color coding
+    tpm_estimate = get_rolling_tpm()
+    tpm_frac     = min(tpm_estimate / 1_000_000, 1.0)
+    tpm_icon     = "🟢" if tpm_frac < 0.60 else ("🟡" if tpm_frac < 0.85 else "🔴")
+    st.progress(
+        tpm_frac,
+        text=f"TPM est: {tpm_icon} {tpm_estimate:,} / 1,000,000 (last 60s)"
+    )
 
     st.divider()
 
@@ -774,16 +906,42 @@ with st.sidebar:
         index=0, key="gemini_model_name"
     )
 
+    # T3-C: Subject persona selector — swaps ≤30-token prompt prefix
+    st.selectbox(
+        "🧠 Subject Persona",
+        list(PERSONAS.keys()),
+        index=0, key="persona",
+        help="Shapes the AI's definition style and example sentence vocabulary domain."
+    )
+
     st.divider()
 
+    # T2-E BUG FIX: Two-click model ID regeneration guard.
+    # First click shows a warning if cards have been exported this session.
+    # Second click (confirm state) actually regenerates the ID.
+    has_exported = (
+        len(st.session_state.processed_vocabs) > 0
+        or len(st.session_state.exported_hashes) > 0
+    )
     if st.button("🔄 Regenerate Note Type Model ID"):
-        st.session_state.model_id = random.randrange(1 << 30, 1 << 31)
-        st.success(f"New Model ID: {st.session_state.model_id}")
+        if has_exported and not st.session_state.model_id_confirm:
+            st.session_state.model_id_confirm = True
+        else:
+            st.session_state.model_id         = random.randrange(1 << 30, 1 << 31)
+            st.session_state.model_id_confirm = False
+            st.success(f"New Model ID: {st.session_state.model_id}")
+
+    if st.session_state.model_id_confirm:
+        st.warning(
+            "⚠️ You have exported cards this session. Changing the Model ID creates a new "
+            "Anki note type and may orphan existing cards. **Click again to confirm.**"
+        )
+
     st.caption(f"Current Model ID: {st.session_state.model_id}")
 
     # C14: Manual cache clear
     if st.button("🗑️ Clear Word Cache"):
-        st.session_state.word_cache = {}
+        st.session_state.word_cache      = {}
         st.session_state.processed_cache = {}
         st.toast("🗑️ Word cache cleared.")
 
@@ -852,11 +1010,8 @@ with tab1:
             for line in lines:
                 parts = line.split(',', 1)
                 bv    = parts[0].strip().lower()
-                bp    = parts[1].strip() if len(parts) > 1 else ""
-                if bp and bp != "1" and not bp.startswith("*"):
-                    if bp.endswith(","): bp = bp[:-1] + "."
-                    elif not bp.endswith((".", "!", "?")): bp += "."
-                    bp = bp.capitalize()
+                # T3-E BUG FIX: shared normalize_phrase() replaces duplicated inline logic
+                bp    = normalize_phrase(parts[1].strip() if len(parts) > 1 else "")
                 if bv:
                     new_rows.append({"vocab": bv, "phrase": bp, "status": "New", "tags": ""})
             if new_rows:
@@ -880,7 +1035,7 @@ with tab2:
     def render_tab2():
         """
         A2: Wrapping in @st.fragment means search, pagination, and data_editor
-        interactions rerun ONLY this function — the sidebar quota bars and Tab 1/3
+        interactions rerun ONLY this function — sidebar quota bars and Tab 1/3
         are never touched on editor interactions.
         """
         if st.session_state.vocab_df.empty:
@@ -924,9 +1079,42 @@ with tab3:
         toggles, and the data_editor in Tab 3 rerun ONLY this function — Tab 1/2
         and the sidebar quota bars are never re-rendered on these interactions.
         """
-        # ── Download state (shown at top after generation) ──
+
+        # ── Download-ready state (shown at top after generation) ──
         if st.session_state.apkg_buffer is not None:
             st.success("✅ Deck generated! Download below to update your database.")
+
+            # T4-A: Live card preview — renders front + back summary before download commit
+            if st.session_state.get("preview_notes"):
+                with st.expander("👁️ Card Preview (first 3 cards)", expanded=True):
+                    for i, note in enumerate(st.session_state.preview_notes, 1):
+                        st.markdown(f"**Card {i} — FRONT**")
+                        # Strip cloze markers to show readable prompt
+                        front_preview = re.sub(r'\{\{c\d+::(.*?)\}\}', r'[___]', note['Text'])
+                        st.markdown(
+                            f"<div style='background:#1a1a1a; border:1px solid #00ff41; "
+                            f"padding:10px 14px; border-radius:4px; font-family:monospace; "
+                            f"color:#aaffaa; line-height:1.6'>{front_preview}</div>",
+                            unsafe_allow_html=True
+                        )
+                        st.markdown(f"**Card {i} — BACK**")
+                        back_items = []
+                        if note.get("Pronunciation"): back_items.append(f"🗣️ {note['Pronunciation']}")
+                        if note.get("Definition"):    back_items.append(f"📜 {note['Definition']}")
+                        if note.get("Examples"):
+                            # strip HTML tags for plain preview
+                            plain_ex = re.sub(r'<[^>]+>', ' ', note['Examples']).strip()
+                            back_items.append(f"🖋️ {plain_ex}")
+                        if note.get("Synonyms"):      back_items.append(f"➕ {note['Synonyms']}")
+                        st.markdown(
+                            "<div style='background:#1a1a1a; border:1px solid #00ffff; "
+                            "padding:10px 14px; border-radius:4px; font-family:monospace; "
+                            f"color:#aaffaa; line-height:1.8'>{'<br>'.join(back_items)}</div>",
+                            unsafe_allow_html=True
+                        )
+                        if i < len(st.session_state.preview_notes):
+                            st.divider()
+
             st.download_button(
                 "📥 Download .apkg",
                 data=st.session_state.apkg_buffer,
@@ -938,6 +1126,7 @@ with tab3:
             if st.button("❌ Cancel / Clear"):
                 st.session_state.apkg_buffer      = None
                 st.session_state.processed_vocabs = []
+                st.session_state.preview_notes    = []
                 st.rerun(scope="app")
             return
 
@@ -950,10 +1139,71 @@ with tab3:
             st.warning("⚠️ No 'New' words to export! All words are marked 'Done'.")
             return
 
+        # T1-B: Failed words retry panel — shown whenever failed_words is non-empty
+        if st.session_state.failed_words:
+            with st.expander(
+                f"⚠️ {len(st.session_state.failed_words)} word(s) failed last generation — click to retry",
+                expanded=True
+            ):
+                st.dataframe(
+                    pd.DataFrame({"Queued for Retry": st.session_state.failed_words}),
+                    hide_index=True
+                )
+                col_retry, col_dismiss = st.columns(2)
+
+                if col_retry.button("🔁 Retry Failed Words", type="primary"):
+                    retry_df = pd.DataFrame({
+                        "vocab":  st.session_state.failed_words,
+                        "phrase": [""] * len(st.session_state.failed_words),
+                        "status": ["New"] * len(st.session_state.failed_words),
+                        "tags":   [""] * len(st.session_state.failed_words),
+                    })
+                    st.session_state.failed_words = []
+                    retry_notes = process_anki_data(
+                        retry_df,
+                        batch_size=st.session_state.last_batch_size,
+                        dry_run=st.session_state.dry_run
+                    )
+                    if retry_notes:
+                        apkg = create_anki_package(
+                            retry_notes,
+                            st.session_state.last_deck_name,
+                            generate_audio=True,
+                            deck_id=st.session_state.deck_id,
+                            include_antonyms=st.session_state.include_antonyms
+                        )
+                        st.session_state.apkg_buffer      = apkg.getvalue()
+                        st.session_state.processed_vocabs = [n['VocabRaw'] for n in retry_notes]
+                        st.session_state.preview_notes    = retry_notes[:3]
+                        st.rerun(scope="app")
+                    else:
+                        st.error("❌ Retry failed. Check your API quota.")
+
+                if col_dismiss.button("🗑️ Dismiss"):
+                    st.session_state.failed_words = []
+                    st.rerun(scope="app")
+
         st.subheader("📇 Generate Cyberpunk Anki Deck")
 
+        # T2-B: Deck hierarchy UI — parse :: separator, validate, show breadcrumb
         deck_col1, deck_col2 = st.columns([3, 1])
-        deck_name_input = deck_col1.text_input("📦 Deck Name", value="-English Learning::Vocabulary")
+        deck_name_raw = deck_col1.text_input(
+            "📦 Deck Name (use :: for sub-decks)",
+            value=st.session_state.last_deck_name
+        )
+        # Sanitize: strip illegal chars, split on ::, rebuild clean hierarchy
+        deck_parts_raw  = [p.strip() for p in deck_name_raw.split("::") if p.strip()]
+        deck_parts      = [_RE_DECK_ILLEGAL.sub("", p) for p in deck_parts_raw]
+        deck_name_input = "::".join(deck_parts) if deck_parts else "Vocabulary"
+        # Persist for T1-B retry panel
+        if deck_name_raw:
+            st.session_state.last_deck_name = deck_name_input
+
+        if _RE_DECK_ILLEGAL.search(deck_name_raw.replace("::", "")):
+            st.warning("⚠️ Illegal characters removed from deck name.")
+        if len(deck_parts) > 1:
+            st.caption("📂 Hierarchy: " + " → ".join(deck_parts))
+
         if deck_col2.button("🎲 New Deck ID"):
             st.session_state.deck_id = random.randrange(1 << 30, 1 << 31)
         deck_col2.caption(f"ID: {st.session_state.deck_id}")
@@ -966,32 +1216,60 @@ with tab3:
             if requests_left > 0 else 1
         )
         batch_size = min(raw_batch, max_safe)
+        st.session_state.last_batch_size = batch_size   # T1-B: persist for retry
         st.caption(f"✅ Effective batch size: **{batch_size}** (quota-adjusted from {raw_batch})")
 
-        include_audio                     = st.checkbox("🔊 Generate Audio Files",            value=True)
-        st.session_state.include_antonyms = st.checkbox("➖ Include Antonyms in Card Back",    value=st.session_state.include_antonyms)
+        include_audio                     = st.checkbox("🔊 Generate Audio Files",             value=True)
+        st.session_state.include_antonyms = st.checkbox("➖ Include Antonyms in Card Back",     value=st.session_state.include_antonyms)
         st.session_state.dry_run          = st.checkbox("🔬 Dry Run Mode (simulate, no quota)", value=st.session_state.dry_run)
 
-        # Export selector
+        # T2-C: Build duplicate-detection column before rendering the selector
+        def _is_dup(vocab_raw: str) -> bool:
+            h = hashlib.sha256(str(vocab_raw).lower().encode('utf-8')).hexdigest()[:16]
+            return h in st.session_state.exported_hashes
+
+        subset_display = subset.copy()
+        subset_display['Export']            = True
+        subset_display['⚠️ Prev. Exported'] = subset_display['vocab'].apply(_is_dup)
+
         st.write("**Select words to export:**")
-        subset['Export'] = True
         edited_export = st.data_editor(
-            subset,
+            subset_display,
             column_config={
-                "Export": st.column_config.CheckboxColumn("Export?", required=True)
+                "Export": st.column_config.CheckboxColumn("Export?", required=True),
+                "⚠️ Prev. Exported": st.column_config.CheckboxColumn(
+                    "Prev. Exported?", disabled=True,
+                    help="This word was already exported to Anki this session."
+                ),
             },
             hide_index=True,
-            disabled=["vocab", "phrase", "status", "tags"]
+            disabled=["vocab", "phrase", "status", "tags", "⚠️ Prev. Exported"]
         )
-        final_export = edited_export[edited_export['Export'] == True]
 
-        # Preview table + size estimate
+        # T4-F BUG FIX: .astype(bool) prevents crash when st.data_editor returns strings
+        final_export = edited_export[edited_export['Export'].astype(bool)]
+
+        # T2-C: Duplicate warning
+        dup_count = int(final_export['⚠️ Prev. Exported'].astype(bool).sum()) \
+            if '⚠️ Prev. Exported' in final_export.columns else 0
+        if dup_count > 0:
+            st.warning(
+                f"⚠️ **{dup_count}** selected word(s) were previously exported this session. "
+                f"Re-importing may create duplicates in Anki unless the deck GUID matches."
+            )
+
+        # Preview table + T2-F: audio-aware size estimate
         if not final_export.empty:
             st.write("### Export Preview")
             st.dataframe(final_export[['vocab', 'phrase']], hide_index=True)
+
             card_count  = len(final_export)
-            est_size_kb = card_count * 2.5
-            st.info(f"📊 **{card_count} cards** • Estimated .apkg size: **{est_size_kb:.1f} KB**")
+            # T2-F: 35 KB/card with audio (avg MP3 ~32-38 KB), 2.5 KB without
+            per_card_kb = 35.0 if include_audio else 2.5
+            est_size_kb = card_count * per_card_kb
+            size_label  = f"{est_size_kb / 1024:.2f} MB" if est_size_kb > 1024 else f"{est_size_kb:.1f} KB"
+            audio_note  = "with audio ~35 KB/card" if include_audio else "no audio ~2.5 KB/card"
+            st.info(f"📊 **{card_count} cards** • Est. .apkg size: **{size_label}** ({audio_note})")
 
         # D20: Memoized quota calculation — recomputes only when inputs actually change
         quota_key = (st.session_state.rpd_count, len(final_export), batch_size)
@@ -1013,6 +1291,7 @@ with tab3:
             st.error("🛑 Exceeds Daily Limit! Reduce your selection or increase batch size.")
         else:
             if st.button("🚀 Generate Deck", type="primary", use_container_width=True):
+                st.session_state.failed_words = []   # T1-B: reset failed list before fresh run
                 raw_notes = []
                 try:
                     raw_notes = process_anki_data(
@@ -1029,6 +1308,7 @@ with tab3:
                         )
                         st.session_state.apkg_buffer      = apkg.getvalue()
                         st.session_state.processed_vocabs = [n['VocabRaw'] for n in raw_notes]
+                        st.session_state.preview_notes    = raw_notes[:3]   # T4-A: store for preview
                         st.rerun(scope="app")   # A3: no sleep; full rerun to show download button
                 except Exception as e:
                     st.error(f"❌ Generation error: {e} — Status rolled back to 'New'.")
