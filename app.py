@@ -1281,6 +1281,13 @@ with tab2:
             if new_mask.any():
                 full_df = pd.concat([full_df, edited[new_mask]], ignore_index=True)
 
+            # FIX-5: Handle deletions — any row visible in the paginated view that is
+            # absent from edited was explicitly deleted by the user in st.data_editor.
+            # FIX-1 never handled this case; deleted rows silently survived in full_df.
+            deleted_idx = [i for i in paginated.index if i not in edited.index]
+            if deleted_idx:
+                full_df = full_df.drop(index=deleted_idx).reset_index(drop=True)
+
             st.session_state.vocab_df = full_df
             save_to_github(st.session_state.vocab_df)
             st.toast("✅ Cloud updated!")
