@@ -1254,14 +1254,31 @@ with tab2:
         start      = (page - 1) * page_size
         paginated  = display_df.iloc[start:start + page_size]
 
+        # FIX-6: Edit buffer pattern.
+        # Root cause: every data_editor interaction (delete/edit/add) triggers a
+        # @st.fragment rerun. On that rerun, paginated was recomputed fresh from the
+        # unchanged vocab_df and fed back into data_editor as data=, wiping all
+        # in-progress changes — this is why deleted rows reappeared immediately.
+        # Fix: cache a _edit_buffer in session_state keyed by (page, search).
+        # Reset ONLY when the user navigates or searches. Pass the buffer to
+        # data_editor; write editor output back to buffer on every rerun so
+        # edits/deletions persist until Save is clicked.
+        _buf_key = f"_edit_buf_{page}_{search}"
+        if st.session_state.get("_edit_buf_key") != _buf_key:
+            st.session_state["_edit_buf_key"] = _buf_key
+            st.session_state["_edit_buffer"]  = paginated.copy()
+
         edited = st.data_editor(
-            paginated, num_rows="dynamic", use_container_width=True, hide_index=True,
+            st.session_state["_edit_buffer"],
+            num_rows="dynamic", use_container_width=True, hide_index=True,
             column_config={
                 "status": st.column_config.SelectboxColumn(
                     "Status", options=["New", "Done"], required=True
                 )
             }
         )
+        # Persist every editor interaction back to the buffer immediately
+        st.session_state["_edit_buffer"] = edited
 
         col_save, col_quality = st.columns(2)
 
