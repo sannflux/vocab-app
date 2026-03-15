@@ -338,23 +338,38 @@ def _generate_single_item(model, vocab: str, phrase: str, target_lang: str) -> d
     return None
 
 # ========================== ASYNC BATCH GENERATOR ==========================
+# Time breakdown per batch (realistic):
+#   ~10–15s  Gemini API latency
+#   ~3–5s    gTTS audio (threaded, after this function)
+#   ~3–4s    ONE GitHub write (save_usage) at the END — not inside loop
+#   ─────────────────────────────────────
+#   ~15–20s  per batch total (12s is just the RPM floor for burst-of-5)
+_SEC_PER_BATCH = 20   # realistic ETA constant used in display
+
 def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6, dry_run=False, target_lang="Indonesian"):
     model = get_gemini_model(st.session_state.gemini_key, GEMINI_MODEL)
     if not model: return []
 
-    all_card_data = []
-    total_items   = len(vocab_phrase_list)
-    batches       = [vocab_phrase_list[i:i + batch_size] for i in range(0, total_items, batch_size)]
+    all_card_data     = []
+    batches           = [vocab_phrase_list[i:i + batch_size] for i in range(0, len(vocab_phrase_list), batch_size)]
+    # Track how many new RPD calls we make; write to GitHub ONCE at the end.
+    rpd_delta         = 0
 
-    with st.status("🤖 Processing AI Batches (RPM Throttled)...", expanded=True) as status_log:
-        progress_bar  = st.progress(0)
-        # Enhancement #12: ETA display
-        eta_slot      = st.empty()
-        est_total_sec = len(batches) * 12
-        eta_slot.info(f"⏱️ Estimated total time: ~{est_total_sec}s ({len(batches)} batches × 12s min)")
+    with st.status("🤖 Processing AI Batches...", expanded=True) as status_log:
+        progress_bar = st.progress(0)
+        eta_slot     = st.empty()
+
+        # Realistic ETA: Gemini latency dominates, not the RPM floor
+        est_total_sec = len(batches) * _SEC_PER_BATCH
+        eta_slot.info(
+            f"⏱️ Est. time: ~{est_total_sec}s "
+            f"({len(batches)} batch{'es' if len(batches) != 1 else ''} × ~{_SEC_PER_BATCH}s each)"
+        )
+
+        t_start = time.time()
 
         for idx, batch in enumerate(batches):
-            if st.session_state.rpd_count >= 20:
+            if st.session_state.rpd_count + rpd_delta >= 20:
                 st.warning("🛑 Daily AI Limit (20 requests) reached. Please try again tomorrow.")
                 break
 
@@ -363,7 +378,7 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6, dry_run=Fal
             batch_dicts = [{"vocab": v[0], "phrase": v[1]} for v in batch]
             vocab_words = [v[0] for v in batch]
 
-            # Enhancement #16: Lean user-turn prompt (static rules now in system_instruction)
+            # Enhancement #16: Lean user-turn prompt (static rules live in system_instruction)
             prompt = (
                 f"MANDATORY: 'translation' field must contain ONLY the {target_lang} translation "
                 f"of the vocab word. NEVER translate the full sentence.\n\n"
@@ -389,17 +404,15 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6, dry_run=Fal
             else:
                 try:
                     response = _call_gemini(model, prompt)   # tenacity handles 429 retries
-                    st.session_state.rpd_count += 1
-                    save_usage(st.session_state.rpd_count)
+                    rpd_delta += 1                           # ← count locally; no GitHub write yet
                     parsed = robust_json_parse(response.text)
                     if isinstance(parsed, list) and len(parsed) == len(batch_dicts):
                         all_card_data.extend(parsed)
                         st.markdown(f"✅ **Processed**: `{', '.join(vocab_words)}`")
                         success = True
-                    elif isinstance(parsed, list):
-                        # Count mismatch — accept partial
+                    elif isinstance(parsed, list) and parsed:
                         all_card_data.extend(parsed)
-                        st.warning(f"⚠️ Got {len(parsed)}/{len(batch_dicts)} items for batch.")
+                        st.warning(f"⚠️ Got {len(parsed)}/{len(batch_dicts)} items — accepting partial.")
                         success = True
                 except Exception as e:
                     st.warning(f"⚠️ Batch failed after retries: {e}")
@@ -408,28 +421,37 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6, dry_run=Fal
                 if not success:
                     st.warning(f"🔁 Retrying {len(batch)} items individually...")
                     for single in batch:
-                        if st.session_state.rpd_count >= 20: break
+                        if st.session_state.rpd_count + rpd_delta >= 20: break
                         enforce_rpm()
                         result = _generate_single_item(model, single[0], single[1], target_lang)
                         if result:
                             all_card_data.append(result)
-                            st.session_state.rpd_count += 1
-                            save_usage(st.session_state.rpd_count)
+                            rpd_delta += 1                   # ← still local, no GitHub write
                             st.markdown(f"  ↳ ✅ Recovered: `{single[0]}`")
                         else:
                             st.error(f"  ↳ ❌ Could not recover `{single[0]}`")
 
-            # Enhancement #12: Update ETA after each batch
-            remaining = len(batches) - (idx + 1)
-            if remaining > 0:
-                eta_slot.info(f"⏱️ ~{remaining * 12}s remaining | Batch {idx + 1}/{len(batches)} done")
-            else:
-                eta_slot.success(f"⏱️ All {len(batches)} batches complete.")
+            # Enhancement #12: Live ETA using actual elapsed time
+            elapsed   = time.time() - t_start
+            done      = idx + 1
+            remaining = len(batches) - done
+            if remaining > 0 and done > 0:
+                avg_sec   = elapsed / done
+                eta_sec   = int(avg_sec * remaining)
+                eta_slot.info(f"⏱️ ~{eta_sec}s remaining | Batch {done}/{len(batches)} done")
+            elif remaining == 0:
+                eta_slot.success(f"✅ All {len(batches)} batches done in {int(elapsed)}s.")
 
-            progress_bar.progress((idx + 1) / len(batches))
+            progress_bar.progress(done / len(batches))
 
-        # Enhancement #4: Persist minute timestamps ONCE per run (not per call)
-        save_minute_usage(st.session_state.rpm_timestamps)
+        # ── ONE GitHub write for the entire run ──────────────────────────────
+        if rpd_delta > 0 and not dry_run:
+            st.session_state.rpd_count += rpd_delta
+            save_usage(st.session_state.rpd_count)          # single GitHub write
+
+        # ── ONE GitHub write for minute timestamps ────────────────────────────
+        save_minute_usage(st.session_state.rpm_timestamps)  # single GitHub write
+
         status_log.update(
             label=f"✅ AI Generation Complete! ({len(all_card_data)} items)",
             state="complete", expanded=False
