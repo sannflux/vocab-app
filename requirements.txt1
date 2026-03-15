@@ -1,7 +1,0 @@
-streamlit>=1.40.0
-pandas
-PyGithub
-google-generativeai
-gTTS
-genanki
-altair
