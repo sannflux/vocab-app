@@ -63,6 +63,7 @@ _RE_CLEAN_FNAME  = re.compile(r'[^a-zA-Z0-9]')
 _RE_AUDIO_CLEAN  = re.compile(r'[^a-zA-Z0-9\s\-\']')
 _RE_DECK_ILLEGAL = re.compile(r'[<>"/\\|?*]')
 _RE_TAG_CLEAN    = re.compile(r'[^\w\-]')
+_RE_STRIP_HTML   = re.compile(r'<[^>]+>')   # FIX-8: strip HTML before word count
 
 _GRAMMAR_RULES = [
     (re.compile(r"\bto doing\b",      re.IGNORECASE), "to do"),
@@ -92,19 +93,30 @@ DIFFICULTY_SUFFIX: dict[str, str] = {
     "Advanced":     "Use sophisticated vocabulary (C1-C2 CEFR). Complex, nuanced examples with idioms.",
 }
 
+# ========================== X3-C: REGISTER LABELS ==========================
+# Five values the AI assigns; mapped to inline badge colors for Anki CSS compat.
+REGISTER_VALUES = ["Formal", "Informal", "Slang", "Technical", "Neutral"]
+REGISTER_BADGE_CSS: dict[str, str] = {
+    "Formal":    "color:#00ffff;border:1px solid #00ffff",
+    "Informal":  "color:#ffff66;border:1px solid #ffff66",
+    "Slang":     "color:#ff6b6b;border:1px solid #ff6b6b",
+    "Technical": "color:#c084fc;border:1px solid #c084fc",
+    "Neutral":   "color:#aaffaa;border:1px solid #aaffaa",
+}
+
 # ========================== T1-D: TPM PRE-FLIGHT THRESHOLDS ==========================
 TPM_WARN_THRESHOLD  = 700_000
 TPM_BLOCK_THRESHOLD = 850_000
 
 # ========================== N2-D: CARD QUALITY SCORER ==========================
-# Rubric: definition length ≥10 words (+30), examples present (+30),
-#         synonyms present (+20), IPA present in Pronunciation (+20). Max = 100.
+# FIX-8: _RE_STRIP_HTML strips HTML tags before word count — prevents <ul><li>
+#         markup from inflating definition length scores.
 QUALITY_WARN_THRESHOLD = 60   # 🔴 below this; 🟡 60-79; 🟢 80+
 
 def score_card(note_data: dict) -> int:
-    """N2-D: Returns a 0-100 quality score for a processed note dict."""
+    """N2-D: Returns 0-100 quality score. FIX-8: strips HTML before word count."""
     score = 0
-    defn = note_data.get("Definition", "")
+    defn  = _RE_STRIP_HTML.sub(' ', note_data.get("Definition", ""))   # FIX-8
     if defn and len(defn.split()) >= 10:
         score += 30
     if note_data.get("Examples", ""):
@@ -116,7 +128,6 @@ def score_card(note_data: dict) -> int:
     return score
 
 def quality_badge(score: int) -> str:
-    """N2-D: Traffic-light emoji for quality score display."""
     if score >= 80: return "🟢"
     if score >= 60: return "🟡"
     return "🔴"
@@ -154,6 +165,11 @@ CYBERPUNK_CSS = f"""
     border-left: 3px solid {THEME_COLOR}; padding-left: 10px;
 }}
 .content {{ color: {TEXT_COLOR}; padding-left: 13px; }}
+.register-badge {{
+    display: inline-block; font-size: 0.75em; font-weight: 700;
+    padding: 1px 7px; border-radius: 3px; letter-spacing: 0.08em;
+    text-transform: uppercase; margin-left: 6px;
+}}
 @media (max-width: 480px) {{
     .card {{ font-size: 16px; padding: 15px; }}
     .vellum-focus-container {{ padding: 15px; }}
@@ -199,10 +215,7 @@ def _legacy_load_rpm() -> list:
         return []
 
 def _bg_save_combined(rpd_count: int, timestamps: list):
-    """
-    T1-A: Background writer for usage_combined.json.
-    FIX-3: Retries with fresh SHA fetch on 409 Conflict to handle concurrent write race.
-    """
+    """T1-A + FIX-3: Background writer; retries on 409 SHA conflict."""
     data = json.dumps({
         "date":       str(date.today()),
         "rpd_count":  rpd_count,
@@ -213,13 +226,12 @@ def _bg_save_combined(rpd_count: int, timestamps: list):
             try:
                 file = repo.get_contents(_COMBINED_USAGE_FILE)
                 repo.update_file(file.path, "Update combined usage", data, file.sha)
-                return   # success
+                return
             except GithubException as e:
                 if e.status == 404:
                     repo.create_file(_COMBINED_USAGE_FILE, "Init combined usage", data)
                     return
                 elif e.status == 409:
-                    # FIX-3: SHA mismatch from concurrent write — wait and retry with fresh SHA
                     time.sleep(1 + attempt)
                     continue
                 raise
@@ -229,14 +241,9 @@ def _bg_save_combined(rpd_count: int, timestamps: list):
             time.sleep(1)
 
 def save_combined_usage(rpd_count: int, timestamps: list):
-    """T1-A: Non-blocking combined usage save."""
     _get_gh_executor().submit(_bg_save_combined, rpd_count, list(timestamps))
 
 def load_combined_usage() -> tuple:
-    """
-    T1-A: Single GH API call. T4-D: Migrates legacy files on 404.
-    Returns (rpd_count: int, rpm_timestamps: list[datetime]).
-    """
     try:
         file = repo.get_contents(_COMBINED_USAGE_FILE)
         data = json.loads(file.decoded_content.decode('utf-8'))
@@ -255,64 +262,46 @@ def load_combined_usage() -> tuple:
 
 # ========================== T1-C: SAFETY BLOCK LOGGER ==========================
 def _bg_log_safety_block(vocab_words: list, prompt_hash: str):
-    entry = {
-        "timestamp":   datetime.now().isoformat(),
-        "vocab":       vocab_words,
-        "prompt_hash": prompt_hash,
-    }
+    entry = {"timestamp": datetime.now().isoformat(), "vocab": vocab_words, "prompt_hash": prompt_hash}
     try:
-        existing = []
-        file_sha = None
+        existing, file_sha = [], None
         try:
             file     = repo.get_contents("safety_log.json")
             file_sha = file.sha
             existing = json.loads(file.decoded_content.decode('utf-8'))
-            if not isinstance(existing, list):
-                existing = []
+            if not isinstance(existing, list): existing = []
         except GithubException as e:
-            if e.status != 404:
-                return
+            if e.status != 404: return
         existing.append(entry)
         existing = existing[-100:]
         data = json.dumps(existing, ensure_ascii=False, indent=2)
-        if file_sha:
-            repo.update_file("safety_log.json", "Safety block log", data, file_sha)
-        else:
-            repo.create_file("safety_log.json", "Init safety log", data)
+        if file_sha: repo.update_file("safety_log.json", "Safety block log", data, file_sha)
+        else:        repo.create_file("safety_log.json", "Init safety log", data)
     except Exception as e:
         print(f"Safety log write error: {e}")
 
 def log_safety_block(vocab_words: list, prompt: str):
-    prompt_hash = hashlib.sha256(prompt.encode('utf-8')).hexdigest()[:16]
-    _get_gh_executor().submit(_bg_log_safety_block, list(vocab_words), prompt_hash)
+    _get_gh_executor().submit(_bg_log_safety_block, list(vocab_words),
+                              hashlib.sha256(prompt.encode('utf-8')).hexdigest()[:16])
 
 # ========================== T4-C: EXPORT HISTORY LOGGER ==========================
 def _bg_save_export_history(deck_name: str, card_count: int, vocab_list: list):
-    entry = {
-        "timestamp":  datetime.now().isoformat(),
-        "deck_name":  deck_name,
-        "card_count": card_count,
-        "vocabs":     vocab_list[:50],
-    }
+    entry = {"timestamp": datetime.now().isoformat(), "deck_name": deck_name,
+             "card_count": card_count, "vocabs": vocab_list[:50]}
     try:
-        existing = []
-        file_sha = None
+        existing, file_sha = [], None
         try:
             file     = repo.get_contents("export_history.json")
             file_sha = file.sha
             existing = json.loads(file.decoded_content.decode('utf-8'))
-            if not isinstance(existing, list):
-                existing = []
+            if not isinstance(existing, list): existing = []
         except GithubException as e:
-            if e.status != 404:
-                return
+            if e.status != 404: return
         existing.append(entry)
         existing = existing[-200:]
         data = json.dumps(existing, ensure_ascii=False, indent=2)
-        if file_sha:
-            repo.update_file("export_history.json", "Export history", data, file_sha)
-        else:
-            repo.create_file("export_history.json", "Init export history", data)
+        if file_sha: repo.update_file("export_history.json", "Export history", data, file_sha)
+        else:        repo.create_file("export_history.json", "Init export history", data)
     except Exception as e:
         print(f"Export history write error: {e}")
 
@@ -322,10 +311,6 @@ def save_export_history(deck_name: str, card_count: int, vocab_list: list):
 # ========================== N4-E: EXPORT HISTORY LOADER ==========================
 @st.cache_data(ttl=120)
 def load_export_history() -> list:
-    """
-    N4-E: Loads export_history.json on demand. Cached 120s to avoid
-    hammering GH on repeated expander open/close.
-    """
     try:
         file = repo.get_contents("export_history.json")
         data = json.loads(file.decoded_content.decode('utf-8'))
@@ -333,31 +318,26 @@ def load_export_history() -> list:
     except:
         return []
 
-# ========================== A5 + BUG FIX: SMART RPM ENFORCEMENT ==========================
+# ========================== A5: SMART RPM ENFORCEMENT ==========================
 def enforce_rpm() -> float:
     t0  = time.perf_counter()
     now = datetime.now()
-
     st.session_state.rpm_timestamps = [
         ts for ts in st.session_state.rpm_timestamps
         if (now - ts).total_seconds() < 60
     ]
     save_combined_usage(st.session_state.rpd_count, st.session_state.rpm_timestamps)
-
     if len(st.session_state.rpm_timestamps) >= 5:
-        sleep_total = 12
         _slot = st.empty()
-        for remaining in range(sleep_total, 0, -1):
+        for remaining in range(12, 0, -1):
             _slot.warning(f"⏳ RPM limit (5/min). Resuming in **{remaining}s**...")
             time.sleep(1)
         _slot.empty()
-
     st.session_state.rpm_timestamps.append(now)
     save_combined_usage(st.session_state.rpd_count, st.session_state.rpm_timestamps)
-
     return time.perf_counter() - t0
 
-# ========================== GEMINI (🔒 model stasis preserved) ==========================
+# ========================== GEMINI (🔒 model stasis) ==========================
 @st.cache_resource
 def get_gemini_model(api_key: str, model_name: str):
     try:
@@ -394,22 +374,21 @@ def cap_each_sentence(text: str) -> str:
 
 def highlight_vocab(text: str, vocab: str) -> str:
     if not text or not vocab: return text
-    pat = re.compile(r'\b' + re.escape(vocab) + r'\b', re.IGNORECASE)
-    return pat.sub(f'<b><u>{vocab}</u></b>', text)
+    return re.compile(r'\b' + re.escape(vocab) + r'\b', re.IGNORECASE).sub(
+        f'<b><u>{vocab}</u></b>', text)
 
 def fix_vocab_casing(phrase: str, vocab: str) -> str:
     if not phrase or not vocab: return phrase
-    pat = re.compile(r'\b' + re.escape(vocab.lower()) + r'\b', re.IGNORECASE)
-    return pat.sub(vocab, phrase)
+    return re.compile(r'\b' + re.escape(vocab.lower()) + r'\b', re.IGNORECASE).sub(vocab, phrase)
 
 def robust_json_parse(text: str):
     text = _RE_JSON_FENCE_S.sub("", text.strip())
     text = _RE_JSON_FENCE_E.sub("", text)
     try: return json.loads(text)
     except: pass
-    match = _RE_JSON_ARRAY.search(text)
-    if match:
-        try: return json.loads(match.group(0))
+    m = _RE_JSON_ARRAY.search(text)
+    if m:
+        try: return json.loads(m.group(0))
         except: pass
     return None
 
@@ -417,51 +396,38 @@ def speak_word(text: str, lang: str = "en-US"):
     if not text: return
     safe = text.replace('"', '\\"').replace("'", "\\'")
     st.components.v1.html(
-        f"""<script>if('speechSynthesis'in window){{
-        var u=new SpeechSynthesisUtterance("{safe}");
-        u.lang="{lang}";u.rate=0.95;window.speechSynthesis.speak(u);}}</script>""",
-        height=0
-    )
+        f"""<script>if('speechSynthesis'in window){{var u=new SpeechSynthesisUtterance("{safe}");
+        u.lang="{lang}";u.rate=0.95;window.speechSynthesis.speak(u);}}</script>""", height=0)
 
-# ========================== T3-E BUG FIX: SHARED PHRASE NORMALIZER ==========================
 def normalize_phrase(p: str) -> str:
     p = p.strip()
-    if not p or p == "1" or p.startswith("*"):
-        return p
-    if p.endswith(","):
-        p = p[:-1] + "."
-    elif not p.endswith((".", "!", "?")):
-        p += "."
+    if not p or p == "1" or p.startswith("*"): return p
+    if p.endswith(","): p = p[:-1] + "."
+    elif not p.endswith((".", "!", "?")): p += "."
     return cap_first(p)
 
-# ========================== B10: SINGLE-PASS FIELD CLEANER ==========================
 def _clean_field(text: str) -> str:
     return ensure_trailing_dot(cap_each_sentence(clean_grammar(normalize_spaces(text))))
 
-# ========================== T2-D: TAG SANITIZER ==========================
 def sanitize_tags(raw_tags: str) -> list:
-    if not raw_tags or not raw_tags.strip():
-        return []
+    if not raw_tags or not raw_tags.strip(): return []
     tags = []
     for t in re.split(r'[,\s]+', raw_tags.strip()):
         t = t.strip()
-        if not t:
-            continue
+        if not t: continue
         clean = _RE_TAG_CLEAN.sub('_', t)
         clean = re.sub(r'_+', '_', clean).strip('_')
-        if clean:
-            tags.append(clean)
+        if clean: tags.append(clean)
     return tags[:10]
 
-# ========================== T4-G + T1-D: TPM TRACKING HELPERS ==========================
+# ========================== T4-G + T1-D: TPM TRACKING ==========================
 def log_tpm_chars(char_count: int):
     st.session_state.tpm_log.append({"ts": datetime.now(), "chars": char_count})
 
 def get_rolling_tpm() -> int:
     now = datetime.now()
     st.session_state.tpm_log = [
-        e for e in st.session_state.tpm_log
-        if (now - e["ts"]).total_seconds() < 60
+        e for e in st.session_state.tpm_log if (now - e["ts"]).total_seconds() < 60
     ]
     return sum(e["chars"] for e in st.session_state.tpm_log) // 4
 
@@ -471,18 +437,11 @@ def check_tpm_preflight(prompt: str) -> tuple:
 
 # ========================== N1-C: QUOTA RESET COUNTDOWN ==========================
 def quota_reset_countdown() -> str:
-    """
-    N1-C: Returns 'Xh Ym' string until next UTC midnight (Gemini quota reset).
-    Uses timezone-aware datetime to avoid DST edge cases.
-    """
-    utc_now     = datetime.now(timezone.utc)
-    midnight    = (utc_now + timedelta(days=1)).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-    delta       = midnight - utc_now
-    hours, rem  = divmod(int(delta.total_seconds()), 3600)
-    minutes     = rem // 60
-    return f"{hours}h {minutes}m"
+    utc_now  = datetime.now(timezone.utc)
+    midnight = (utc_now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    delta    = midnight - utc_now
+    hours, rem = divmod(int(delta.total_seconds()), 3600)
+    return f"{hours}h {rem // 60}m"
 
 # ========================== C13 + C14: BATCH GENERATOR ==========================
 def generate_anki_card_data_batched(
@@ -495,21 +454,26 @@ def generate_anki_card_data_batched(
     model          = get_gemini_model(st.session_state.gemini_key, model_name)
     if not model: return []
 
-    persona_prefix  = PERSONAS.get(st.session_state.get("persona", "General"), "")
-    diff_str        = DIFFICULTY_SUFFIX.get(st.session_state.get("difficulty", "Intermediate"), "")
-    # N3-C: collocations is always Rule 8; difficulty shifts to Rule 9 when active
-    difficulty_rule = f"\n9. DIFFICULTY LEVEL: {diff_str} Tailor all outputs accordingly." \
+    persona_prefix = PERSONAS.get(st.session_state.get("persona", "General"), "")
+    diff_str       = DIFFICULTY_SUFFIX.get(st.session_state.get("difficulty", "Intermediate"), "")
+    # X3-D: mnemonic rule injected as Rule 11 when opt-in is active
+    use_mnemonic   = st.session_state.get("use_mnemonic", False)
+    mnemonic_rule  = (
+        "\n11. 'mnemonic': ONE memorable image or word-story hook to aid recall (max 20 words). "
+        "Example for SERENDIPITY: 'Imagine a SERENe DIP into a lucky pool.'"
+        if use_mnemonic else ""
+    )
+    # X3-C: register is Rule 9; difficulty is Rule 10 (conditional)
+    difficulty_rule = f"\n10. DIFFICULTY LEVEL: {diff_str} Tailor all outputs accordingly." \
         if diff_str else ""
 
     word_cache     = st.session_state.get("word_cache", {})
     cached_results = [
         word_cache[vp[0].strip().lower()]
-        for vp in vocab_phrase_list
-        if vp[0].strip().lower() in word_cache
+        for vp in vocab_phrase_list if vp[0].strip().lower() in word_cache
     ]
     deduped_list = [
-        vp for vp in vocab_phrase_list
-        if vp[0].strip().lower() not in word_cache
+        vp for vp in vocab_phrase_list if vp[0].strip().lower() not in word_cache
     ]
 
     if cached_results:
@@ -527,16 +491,15 @@ def generate_anki_card_data_batched(
         for idx, batch in enumerate(batches):
             if st.session_state.rpd_count >= 20:
                 st.warning("🛑 Daily AI Limit (20 requests) reached. Try again tomorrow.")
-                for vp in batch:
-                    st.session_state.failed_words.append(vp[0])
+                for vp in batch: st.session_state.failed_words.append(vp[0])
                 break
 
             t_rpm       = enforce_rpm()
             batch_dicts = [{"vocab": v[0], "phrase": v[1]} for v in batch]
             vocab_words = [v[0] for v in batch]
 
-            # N3-C: 'collocations' added as Rule 8 — always present in schema.
-            # T3-C persona prefix + T3-D difficulty as optional Rule 9.
+            # Rule 8 = collocations, Rule 9 = register, Rule 10 = difficulty (optional),
+            # Rule 11 = mnemonic (optional, X3-D)
             prompt = f"""{persona_prefix}You are an expert educational lexicographer. Think step-by-step:
 1. Identify primary sense from phrase or context.
 2. Generate accurate fields.
@@ -553,12 +516,13 @@ RULES:
 5. EXACT 'vocab' must remain unchanged.
 6. MANDATORY: 'translation' must contain ONLY the {TARGET_LANG} translation of the 'vocab' word/phrase. NEVER translate the full example sentence.
 7. 'part_of_speech' MUST be one of: Noun, Verb, Adjective, Adverb, Pronoun, Preposition, Conjunction, Interjection, Phrase.
-8. 'collocations': provide exactly 2-3 of the most natural and common word combinations (collocations) for the vocab as a JSON array of strings.{difficulty_rule}
+8. 'collocations': provide exactly 2-3 of the most natural and common word combinations for the vocab as a JSON array of strings.
+9. 'register': MUST be exactly one of: Formal, Informal, Slang, Technical, Neutral.{difficulty_rule}{mnemonic_rule}
 
 EXAMPLES:
 [
-  {{"vocab":"serendipity","phrase":"We found the perfect cafe by pure serendipity.","translation":"kebetulan","part_of_speech":"Noun","pronunciation_ipa":"/ˌsɛrənˈdɪpɪti/","definition_english":"The occurrence and development of events by chance in a happy or beneficial way.","example_sentences":["It was pure serendipity that we met."],"synonyms_antonyms":{{"synonyms":["chance","luck"],"antonyms":["misfortune"]}},"etymology":"Coined by Horace Walpole in 1754.","collocations":["by pure serendipity","happy serendipity","moment of serendipity"]}},
-  {{"vocab":"run","phrase":"*He decided to run for office","translation":"mencalonkan diri","part_of_speech":"Verb","pronunciation_ipa":"/rʌn/","definition_english":"To compete in an election.","example_sentences":["She will run for president."],"synonyms_antonyms":{{"synonyms":["campaign"],"antonyms":["withdraw"]}},"etymology":"Old English rinnan.","collocations":["run for office","run a campaign","run against"]}}
+  {{"vocab":"serendipity","phrase":"We found the perfect cafe by pure serendipity.","translation":"kebetulan","part_of_speech":"Noun","pronunciation_ipa":"/ˌsɛrənˈdɪpɪti/","definition_english":"The occurrence and development of events by chance in a happy or beneficial way.","example_sentences":["It was pure serendipity that we met."],"synonyms_antonyms":{{"synonyms":["chance","luck"],"antonyms":["misfortune"]}},"etymology":"Coined by Horace Walpole in 1754.","collocations":["by pure serendipity","happy serendipity","moment of serendipity"],"register":"Neutral","mnemonic":"Imagine a SERENe DIP into a lucky pool of fate."}},
+  {{"vocab":"run","phrase":"*He decided to run for office","translation":"mencalonkan diri","part_of_speech":"Verb","pronunciation_ipa":"/rʌn/","definition_english":"To compete in an election.","example_sentences":["She will run for president."],"synonyms_antonyms":{{"synonyms":["campaign"],"antonyms":["withdraw"]}},"etymology":"Old English rinnan.","collocations":["run for office","run a campaign","run against"],"register":"Formal","mnemonic":"A person RUNning in a suit toward a ballot box."}}
 ]
 
 BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
@@ -570,22 +534,17 @@ BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
                 if not _is_tpm_safe:
                     st.error(
                         f"🛑 TPM Pre-flight blocked `{', '.join(vocab_words)}`: "
-                        f"~{_projected:,} projected tokens exceeds {TPM_BLOCK_THRESHOLD:,} "
-                        f"limit. Wait ~60s for the rolling window to reset."
+                        f"~{_projected:,} projected tokens exceeds {TPM_BLOCK_THRESHOLD:,} limit. "
+                        f"Wait ~60s for the rolling window to reset."
                     )
                     st.session_state.failed_words.extend(vocab_words)
-                    timings.append({
-                        "batch": idx + 1, "words": ", ".join(vocab_words),
-                        "rpm_wait_s": round(t_rpm, 3), "gemini_s": 0.0,
-                        "cached": False, "note": "TPM_BLOCKED",
-                    })
+                    timings.append({"batch": idx + 1, "words": ", ".join(vocab_words),
+                                    "rpm_wait_s": round(t_rpm, 3), "gemini_s": 0.0,
+                                    "cached": False, "note": "TPM_BLOCKED"})
                     progress_bar.progress((idx + 1) / len(batches))
                     continue
                 elif _projected > TPM_WARN_THRESHOLD:
-                    st.warning(
-                        f"⚠️ TPM approaching limit: ~{_projected:,} / 1,000,000 "
-                        f"projected tokens. Consider pausing after this batch."
-                    )
+                    st.warning(f"⚠️ TPM approaching limit: ~{_projected:,} / 1,000,000 projected tokens.")
 
             success     = False
             t_api_start = time.perf_counter()
@@ -602,52 +561,40 @@ BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
                         "synonyms_antonyms": {"synonyms": ["mock", "simulated"], "antonyms": []},
                         "etymology": "Simulated.",
                         "collocations": ["mock collocation one", "mock collocation two"],
+                        "register": "Neutral",
+                        "mnemonic": "Mock mnemonic hook for dry run.",
                     }
                     for v in batch
                 ]
                 all_new_data.extend(mock)
-                for card in mock:
-                    word_cache[card['vocab'].strip().lower()] = card
+                for card in mock: word_cache[card['vocab'].strip().lower()] = card
                 success = True
             else:
                 for attempt in range(3):
                     try:
                         response = model.generate_content(prompt)
                         st.session_state.rpd_count += 1
-                        save_combined_usage(
-                            st.session_state.rpd_count,
-                            st.session_state.rpm_timestamps
-                        )
+                        save_combined_usage(st.session_state.rpd_count, st.session_state.rpm_timestamps)
 
                         if hasattr(response, 'candidates') and response.candidates:
                             finish = str(response.candidates[0].finish_reason)
                             if finish in ("3", "SAFETY", "FinishReason.SAFETY"):
-                                st.warning(
-                                    f"🛡️ Safety filter blocked `{', '.join(vocab_words)}`. "
-                                    f"Logged to safety_log.json and queued for retry."
-                                )
+                                st.warning(f"🛡️ Safety filter blocked `{', '.join(vocab_words)}`. Logged and queued for retry.")
                                 log_safety_block(vocab_words, prompt)
                                 st.session_state.failed_words.extend(vocab_words)
                                 break
 
                         parsed = robust_json_parse(response.text)
-
                         if isinstance(parsed, list) and len(parsed) > 0:
                             all_new_data.extend(parsed)
-                            for card in parsed:
-                                word_cache[card['vocab'].strip().lower()] = card
-
+                            for card in parsed: word_cache[card['vocab'].strip().lower()] = card
                             recovered = [c.get('vocab', '') for c in parsed]
                             missed    = [v for v in vocab_words if v not in recovered]
                             if missed:
                                 st.session_state.failed_words.extend(missed)
-                                st.warning(
-                                    f"⚠️ Partial batch {idx + 1}: "
-                                    f"{len(parsed)}/{len(batch_dicts)} recovered. "
-                                    f"Missed: `{', '.join(missed)}`"
-                                )
+                                st.warning(f"⚠️ Partial batch {idx+1}: {len(parsed)}/{len(batch_dicts)} recovered. Missed: `{', '.join(missed)}`")
                             else:
-                                st.markdown(f"✅ **Batch {idx + 1}**: `{', '.join(vocab_words)}`")
+                                st.markdown(f"✅ **Batch {idx+1}**: `{', '.join(vocab_words)}`")
                             success = True
                             break
 
@@ -656,43 +603,29 @@ BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
                             backoff = 20 + (2 ** attempt) + random.uniform(0, 1)
                             _slot   = st.empty()
                             for r in range(int(backoff), 0, -1):
-                                _slot.warning(
-                                    f"⚠️ 429 Rate Limit. Retrying in **{r}s**... "
-                                    f"(attempt {attempt + 1}/3)"
-                                )
+                                _slot.warning(f"⚠️ 429 Rate Limit. Retrying in **{r}s**... (attempt {attempt+1}/3)")
                                 time.sleep(1)
                             _slot.empty()
                         else:
                             time.sleep(2)
 
             t_api_elapsed = time.perf_counter() - t_api_start
-            timings.append({
-                "batch":      idx + 1,
-                "words":      ", ".join(vocab_words),
-                "rpm_wait_s": round(t_rpm, 3),
-                "gemini_s":   round(t_api_elapsed, 3),
-                "cached":     False,
-                "note":       "",
-            })
-
+            timings.append({"batch": idx+1, "words": ", ".join(vocab_words),
+                            "rpm_wait_s": round(t_rpm, 3), "gemini_s": round(t_api_elapsed, 3),
+                            "cached": False, "note": ""})
             if not success and not dry_run:
                 st.error(f"❌ **Failed**: `{', '.join(vocab_words)}` — queued for retry")
                 st.session_state.failed_words.extend(vocab_words)
-
             progress_bar.progress((idx + 1) / len(batches))
 
         total = len(all_new_data) + len(cached_results)
-        status_log.update(
-            label=f"✅ AI Complete! ({total} items | {len(cached_results)} cached)",
-            state="complete", expanded=False
-        )
+        status_log.update(label=f"✅ AI Complete! ({total} items | {len(cached_results)} cached)",
+                          state="complete", expanded=False)
 
     st.session_state.word_cache = word_cache
-
     if timings:
         with st.expander("⏱️ Batch Performance Timings", expanded=False):
             st.dataframe(pd.DataFrame(timings), hide_index=True)
-
     return cached_results + all_new_data
 
 # ========================== B9 + B10: PROCESS ANKI DATA ==========================
@@ -710,33 +643,20 @@ def process_anki_data(
         return cached["notes"]
 
     df_clean = df_subset[df_subset['vocab'].astype(str).str.strip().str.len() > 0].copy()
-
     vocab_phrase_list = (
-        df_clean
-        .reindex(columns=['vocab', 'phrase'], fill_value='')
-        [['vocab', 'phrase']]
-        .values.tolist()
+        df_clean.reindex(columns=['vocab', 'phrase'], fill_value='')[['vocab', 'phrase']].values.tolist()
     )
 
-    # FIX-4: Vectorized tags lookup — replaces iterrows() O(n) loop.
-    # set_index + dict comprehension is ~50x faster on large DataFrames.
+    # FIX-4: Vectorized tags lookup
     tags_lookup: dict[str, list] = {}
     if 'tags' in df_clean.columns:
         tags_series = (
-            df_clean
-            .assign(_vk=df_clean['vocab'].astype(str).str.strip().str.lower())
-            .set_index('_vk')['tags']
-            .fillna('')
+            df_clean.assign(_vk=df_clean['vocab'].astype(str).str.strip().str.lower())
+            .set_index('_vk')['tags'].fillna('')
         )
-        tags_lookup = {
-            str(k): sanitize_tags(str(v))
-            for k, v in tags_series.items()
-            if str(v).strip()
-        }
+        tags_lookup = {str(k): sanitize_tags(str(v)) for k, v in tags_series.items() if str(v).strip()}
 
-    all_card_data = generate_anki_card_data_batched(
-        vocab_phrase_list, batch_size=batch_size, dry_run=dry_run
-    )
+    all_card_data = generate_anki_card_data_batched(vocab_phrase_list, batch_size=batch_size, dry_run=dry_run)
 
     processed_notes = []
     for card_data in all_card_data:
@@ -756,20 +676,13 @@ def process_anki_data(
         ipa         = card_data.get("pronunciation_ipa", "")
         eng_def     = _clean_field(card_data.get("definition_english", ""))
         examples    = [_clean_field(e) for e in (card_data.get("example_sentences") or [])[:3]]
-        ex_field    = (
-            "<ul>" + "".join(f"<li><i>{e}</i></li>" for e in examples) + "</ul>"
-            if examples else ""
-        )
-        syn_ant  = card_data.get("synonyms_antonyms") or {}
-        synonyms = ensure_trailing_dot(", ".join(
-            cap_first(s) for s in (syn_ant.get("synonyms") or [])[:5]
-        ))
-        antonyms = ensure_trailing_dot(", ".join(
-            cap_first(a) for a in (syn_ant.get("antonyms") or [])[:5]
-        ))
-        etymology = normalize_spaces(card_data.get("etymology", ""))
+        ex_field    = "<ul>" + "".join(f"<li><i>{e}</i></li>" for e in examples) + "</ul>" if examples else ""
+        syn_ant     = card_data.get("synonyms_antonyms") or {}
+        synonyms    = ensure_trailing_dot(", ".join(cap_first(s) for s in (syn_ant.get("synonyms") or [])[:5]))
+        antonyms    = ensure_trailing_dot(", ".join(cap_first(a) for a in (syn_ant.get("antonyms") or [])[:5]))
+        etymology   = normalize_spaces(card_data.get("etymology", ""))
 
-        # N3-C: Parse collocations — handle both list and string AI responses
+        # N3-C: Collocations — handle list or string
         collocations_raw = card_data.get("collocations") or []
         if isinstance(collocations_raw, list):
             collocations = "; ".join(cap_first(c) for c in collocations_raw[:3] if c)
@@ -778,10 +691,19 @@ def process_anki_data(
         else:
             collocations = ""
 
+        # X3-C: Register — validate, default Neutral, build inline-styled badge
+        register_raw  = str(card_data.get("register", "") or "").strip().title()
+        register      = register_raw if register_raw in REGISTER_VALUES else "Neutral"
+        reg_css       = REGISTER_BADGE_CSS.get(register, REGISTER_BADGE_CSS["Neutral"])
+        register_html = f'<span class="register-badge" style="{reg_css}">{register}</span>'
+
+        # X3-D: Mnemonic
+        mnemonic_raw = str(card_data.get("mnemonic", "") or "").strip()
+        mnemonic     = cap_first(mnemonic_raw) if mnemonic_raw else ""
+
         text_field = (
             f"{formatted}<br><br>{vocab_cap}: <b>{{{{c1::{translation}}}}}</b>"
-            if formatted else
-            f"{vocab_cap}: <b>{{{{c1::{translation}}}}}</b>"
+            if formatted else f"{vocab_cap}: <b>{{{{c1::{translation}}}}}</b>"
         )
         pron_field = f"<b>[{pos}]</b> {ipa}" if ipa else f"<b>[{pos}]</b>"
 
@@ -795,18 +717,16 @@ def process_anki_data(
             "Antonyms":      antonyms,
             "Etymology":     etymology,
             "Collocations":  collocations,   # N3-C
+            "Register":      register_html,  # X3-C: colored badge HTML for Anki
+            "RegisterLabel": register,       # X3-C: plain text for editor display
+            "Mnemonic":      mnemonic,       # X3-D
             "Tags":          tags_lookup.get(vocab_raw, []),
         }
-        # N2-D: Attach quality score to note dict for preview rendering
-        note["_quality_score"] = score_card(note)
+        note["_quality_score"] = score_card(note)   # N2-D
         processed_notes.append(note)
 
-    st.session_state.processed_cache = {
-        "key": cache_key, "notes": processed_notes, "time": datetime.now()
-    }
-    st.caption(
-        f"⏱️ `process_anki_data`: {time.perf_counter() - t0:.3f}s — {len(processed_notes)} notes"
-    )
+    st.session_state.processed_cache = {"key": cache_key, "notes": processed_notes, "time": datetime.now()}
+    st.caption(f"⏱️ `process_anki_data`: {time.perf_counter() - t0:.3f}s — {len(processed_notes)} notes")
     return processed_notes
 
 # ========================== D17: AUDIO HELPER ==========================
@@ -845,6 +765,9 @@ def create_anki_package(
 {{#Pronunciation}}<div class="vellum-section">
 <div class="section-header">🗣️ PRONUNCIATION</div>
 <div class="content">{{Pronunciation}}</div></div>{{/Pronunciation}}
+{{#Register}}<div class="vellum-section">
+<div class="section-header">🏷 REGISTER</div>
+<div class="content">{{Register}}</div></div>{{/Register}}
 {{#Examples}}<div class="vellum-section">
 <div class="section-header">🖋️ EXAMPLES</div>
 <div class="content">{{Examples}}</div></div>{{/Examples}}
@@ -865,6 +788,9 @@ def create_anki_package(
 {{#Etymology}}<div class="vellum-section">
 <div class="section-header">🏛️ ETYMOLOGY</div>
 <div class="content">{{Etymology}}</div></div>{{/Etymology}}
+{{#Mnemonic}}<div class="vellum-section">
+<div class="section-header">💡 MEMORY HOOK</div>
+<div class="content">{{Mnemonic}}</div></div>{{/Mnemonic}}
 <div style='display:none'>{{Audio}}</div>
 </div>"""
 
@@ -874,9 +800,12 @@ def create_anki_package(
         fields=[
             {'name': 'Text'},          {'name': 'Pronunciation'},
             {'name': 'Definition'},    {'name': 'Examples'},
-            {'name': 'Collocations'},  # N3-C: new field (position 5)
+            {'name': 'Collocations'},  # N3-C
+            {'name': 'Register'},      # X3-C
             {'name': 'Synonyms'},      {'name': 'Antonyms'},
-            {'name': 'Etymology'},     {'name': 'Audio'},
+            {'name': 'Etymology'},
+            {'name': 'Mnemonic'},      # X3-D
+            {'name': 'Audio'},
         ],
         templates=[{'name': 'Card 1', 'qfmt': front_html, 'afmt': back_html}],
         css=CYBERPUNK_CSS,
@@ -887,61 +816,48 @@ def create_anki_package(
 
     with tempfile.TemporaryDirectory() as temp_dir:
         audio_map = {}
-
         if generate_audio:
             t_audio       = time.perf_counter()
             unique_vocabs = {n['VocabRaw'] for n in notes_data if n['VocabRaw']}
-            args_list     = [(v, temp_dir) for v in unique_vocabs]
-
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as exc:
-                for vk, fn, fp in exc.map(generate_audio_file, args_list):
+                for vk, fn, fp in exc.map(generate_audio_file, [(v, temp_dir) for v in unique_vocabs]):
                     if fn:
                         media_files.append(fp)
                         audio_map[vk] = f"[sound:{fn}]"
-
             st.caption(f"⏱️ Audio: {time.perf_counter() - t_audio:.2f}s for {len(unique_vocabs)} words")
 
         exported_hashes = st.session_state.get("exported_hashes", set())
-
         for note_data in notes_data:
             guid_input = note_data['VocabRaw'] + deck_name
-            vocab_hash = str(
-                int(hashlib.sha256(guid_input.encode('utf-8')).hexdigest(), 16) % (10 ** 10)
-            )
-            exported_hashes.add(
-                hashlib.sha256(note_data['VocabRaw'].encode('utf-8')).hexdigest()[:16]
-            )
+            vocab_hash = str(int(hashlib.sha256(guid_input.encode('utf-8')).hexdigest(), 16) % (10 ** 10))
+            exported_hashes.add(hashlib.sha256(note_data['VocabRaw'].encode('utf-8')).hexdigest()[:16])
             my_deck.add_note(genanki.Note(
                 model=my_model,
                 fields=[
-                    note_data['Text'],          note_data['Pronunciation'],
-                    note_data['Definition'],    note_data['Examples'],
-                    note_data['Collocations'],  # N3-C
-                    note_data['Synonyms'],      note_data['Antonyms'],
-                    note_data['Etymology'],     audio_map.get(note_data['VocabRaw'], ""),
+                    note_data['Text'],             note_data['Pronunciation'],
+                    note_data['Definition'],       note_data['Examples'],
+                    note_data.get('Collocations', ''),
+                    note_data.get('Register', ''),
+                    note_data['Synonyms'],         note_data['Antonyms'],
+                    note_data['Etymology'],
+                    note_data.get('Mnemonic', ''),
+                    audio_map.get(note_data['VocabRaw'], ""),
                 ],
                 tags=note_data['Tags'],
                 guid=vocab_hash
             ))
 
         st.session_state.exported_hashes = exported_hashes
-
         my_package             = genanki.Package(my_deck)
         my_package.media_files = media_files
         output_path            = os.path.join(temp_dir, 'output.apkg')
         my_package.write_to_file(output_path)
-
         buffer = io.BytesIO()
-        with open(output_path, "rb") as f:
-            buffer.write(f.read())
+        with open(output_path, "rb") as f: buffer.write(f.read())
         buffer.seek(0)
 
-    save_export_history(
-        deck_name  = deck_name,
-        card_count = len(notes_data),
-        vocab_list = [n['VocabRaw'] for n in notes_data],
-    )
-
+    save_export_history(deck_name=deck_name, card_count=len(notes_data),
+                        vocab_list=[n['VocabRaw'] for n in notes_data])
     st.caption(f"⏱️ `create_anki_package` total: {time.perf_counter() - t0:.2f}s")
     return buffer
 
@@ -950,50 +866,38 @@ def create_anki_package(
 def load_data() -> pd.DataFrame:
     try:
         file_content = repo.get_contents("vocabulary.csv")
-        df = pd.read_csv(
-            io.StringIO(file_content.decoded_content.decode('utf-8')), dtype=str
-        )
+        df = pd.read_csv(io.StringIO(file_content.decoded_content.decode('utf-8')), dtype=str)
         df['phrase'] = df['phrase'].fillna("")
         df['status'] = df['status'].fillna('New') if 'status' in df.columns else 'New'
         df['tags']   = df['tags'].fillna('')      if 'tags'   in df.columns else ''
         return df.sort_values(by="vocab", ignore_index=True)
     except GithubException as e:
-        if e.status == 404:
-            return pd.DataFrame(columns=['vocab', 'phrase', 'status', 'tags'])
+        if e.status == 404: return pd.DataFrame(columns=['vocab', 'phrase', 'status', 'tags'])
         st.stop()
     except:
         st.stop()
 
 def save_to_github(dataframe: pd.DataFrame) -> bool:
-    """
-    N4-B: Saves an undo snapshot to session_state BEFORE committing to GitHub.
-    Snapshot is a plain copy — no deep copy needed as we replace the reference.
-    """
-    # N4-B: snapshot for undo — stored before any mutation
+    """N4-B: Snapshots vocab_df to undo_df before every write."""
     st.session_state.undo_df = st.session_state.vocab_df.copy()
-
     t0        = time.perf_counter()
     mask      = dataframe['vocab'].astype(str).str.strip().str.len() > 0
     dataframe = dataframe[mask].drop_duplicates(subset=['vocab'], keep='last')
-    # Drop internal-only columns that may have leaked in from Tab 3 data_editor
-    drop_cols = [c for c in ['Export', '⚠️ Prev. Exported', '_quality_score'] if c in dataframe.columns]
-    if drop_cols:
-        dataframe = dataframe.drop(columns=drop_cols)
-    csv_data  = dataframe.to_csv(index=False)
+    drop_cols = [c for c in ['Export', '⚠️ Prev. Exported', '_quality_score',
+                              'RegisterLabel'] if c in dataframe.columns]
+    if drop_cols: dataframe = dataframe.drop(columns=drop_cols)
+    csv_data = dataframe.to_csv(index=False)
     try:
         file = repo.get_contents("vocabulary.csv")
         repo.update_file(file.path, "Updated vocab", csv_data, file.sha)
     except GithubException as e:
-        if e.status == 404:
-            repo.create_file("vocabulary.csv", "Initial commit", csv_data)
+        if e.status == 404: repo.create_file("vocabulary.csv", "Initial commit", csv_data)
     load_data.clear()
     st.caption(f"⏱️ GitHub save: {time.perf_counter() - t0:.2f}s")
     return True
 
-# ========================== D18: SESSION STATE INIT ==========================
-# FIX-2: load_combined_usage() is now GATED — only fires on true cold boot
-# (when rpd_count/rpm_timestamps keys are absent from session_state).
-# Previously called unconditionally at module level → wasted 1 GH API call per rerun.
+# ========================== SESSION STATE INIT ==========================
+# FIX-2: load_combined_usage gated to cold boot only
 if "rpd_count" not in st.session_state or "rpm_timestamps" not in st.session_state:
     _init_rpd, _init_rpm = load_combined_usage()
 else:
@@ -1028,33 +932,35 @@ st.session_state.setdefault("preview_notes",     [])
 st.session_state.setdefault("last_deck_name",    "-English Learning::Vocabulary")
 st.session_state.setdefault("last_batch_size",   6)
 st.session_state.setdefault("model_id_confirm",  False)
-st.session_state.setdefault("undo_df",           None)   # N4-B
+st.session_state.setdefault("undo_df",           None)
+st.session_state.setdefault("use_mnemonic",      False)   # X3-D
+st.session_state.setdefault("editing_notes",     None)    # X2-A: card editor buffer
+st.session_state.setdefault("editing_deck_name", "")      # X2-A: preserved for pack step
+st.session_state.setdefault("editing_audio",     True)    # X2-A: preserved for pack step
 
 # ========================== CALLBACKS ==========================
 def mark_as_done_callback():
     if st.session_state.processed_vocabs:
         st.session_state.vocab_df.loc[
-            st.session_state.vocab_df['vocab'].isin(st.session_state.processed_vocabs),
-            'status'
+            st.session_state.vocab_df['vocab'].isin(st.session_state.processed_vocabs), 'status'
         ] = 'Done'
         save_to_github(st.session_state.vocab_df)
     st.session_state.apkg_buffer      = None
     st.session_state.processed_vocabs = []
     st.session_state.preview_notes    = []
+    st.session_state.editing_notes    = None   # X2-A
 
 def save_single_word_callback():
-    v     = st.session_state.input_vocab.lower().strip()
-    p_raw = st.session_state.input_phrase
+    v = st.session_state.input_vocab.lower().strip()
     if v:
-        p    = normalize_phrase(p_raw)
+        p    = normalize_phrase(st.session_state.input_phrase)
         mask = st.session_state.vocab_df['vocab'] == v
         if not st.session_state.vocab_df.empty and mask.any():
             st.session_state.vocab_df.loc[mask, ['phrase', 'status']] = [p, 'New']
         else:
             new_row = pd.DataFrame([{"vocab": v, "phrase": p, "status": "New", "tags": ""}])
             st.session_state.vocab_df = pd.concat(
-                [st.session_state.vocab_df, new_row], ignore_index=True
-            )
+                [st.session_state.vocab_df, new_row], ignore_index=True)
         save_to_github(st.session_state.vocab_df)
         st.session_state.input_phrase = ""
         st.session_state.input_vocab  = ""
@@ -1073,10 +979,8 @@ with st.sidebar:
     col2.metric("✨ New",   new_words)
     st.metric("🤖 Daily AI Usage", f"{st.session_state.rpd_count}/20 Requests")
 
-    rpm_live = len([
-        ts for ts in st.session_state.rpm_timestamps
-        if (datetime.now() - ts).total_seconds() < 60
-    ])
+    rpm_live = len([ts for ts in st.session_state.rpm_timestamps
+                    if (datetime.now() - ts).total_seconds() < 60])
     st.progress(rpm_live / 5,                    text=f"RPM Live: {rpm_live}/5 (last 60s)")
     st.progress(st.session_state.rpd_count / 20, text=f"RPD: {st.session_state.rpd_count}/20")
 
@@ -1084,43 +988,34 @@ with st.sidebar:
     tpm_frac     = min(tpm_estimate / 1_000_000, 1.0)
     tpm_icon     = "🟢" if tpm_frac < 0.60 else ("🟡" if tpm_frac < 0.85 else "🔴")
     st.progress(tpm_frac, text=f"TPM est: {tpm_icon} {tpm_estimate:,} / 1,000,000 (last 60s)")
-
-    # N1-C: Quota reset countdown — UTC midnight, timezone-aware
     st.caption(f"⏰ Quota resets in **{quota_reset_countdown()}** (UTC midnight)")
 
     st.divider()
 
-    st.selectbox(
-        "🎯 Definition Language",
-        ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"],
-        index=0, key="target_lang"
-    )
-    st.selectbox(
-        "🤖 AI Model",
-        ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"],
-        index=0, key="gemini_model_name"
-    )
-    st.selectbox(
-        "🧠 Subject Persona",
-        list(PERSONAS.keys()),
-        index=0, key="persona",
-        help="Shapes the AI's definition style and example sentence domain."
-    )
-    st.radio(
-        "📊 Difficulty Level",
-        list(DIFFICULTY_SUFFIX.keys()),
-        index=1, horizontal=True, key="difficulty",
-        help="Beginner/Advanced appends a CEFR-level instruction as Rule 9."
-    )
+    st.selectbox("🎯 Definition Language",
+                 ["Indonesian", "Spanish", "French", "German", "Japanese", "English (Simple)"],
+                 index=0, key="target_lang")
+    st.selectbox("🤖 AI Model",
+                 ["gemini-2.5-flash-lite", "gemini-2.0-flash-exp"],
+                 index=0, key="gemini_model_name")
+    st.selectbox("🧠 Subject Persona", list(PERSONAS.keys()), index=0, key="persona",
+                 help="Shapes the AI's definition style and example sentence domain.")
+    st.radio("📊 Difficulty Level", list(DIFFICULTY_SUFFIX.keys()),
+             index=1, horizontal=True, key="difficulty",
+             help="Beginner/Advanced appends a CEFR-level instruction as Rule 10.")
     if st.session_state.difficulty != "Intermediate":
-        st.caption(f"📌 Rule 9: _{DIFFICULTY_SUFFIX[st.session_state.difficulty]}_")
+        st.caption(f"📌 Rule 10: _{DIFFICULTY_SUFFIX[st.session_state.difficulty]}_")
+
+    # X3-D: Mnemonic generator opt-in
+    st.checkbox("💡 Generate Memory Hooks", key="use_mnemonic",
+                help="Adds a memorable story/image hook per card (Rule 11, ~25 extra tokens/word).")
+    if st.session_state.use_mnemonic:
+        st.caption("📌 Rule 11 active: mnemonic hook generated for each word.")
 
     st.divider()
 
-    has_exported = (
-        len(st.session_state.processed_vocabs) > 0
-        or len(st.session_state.exported_hashes) > 0
-    )
+    has_exported = (len(st.session_state.processed_vocabs) > 0
+                    or len(st.session_state.exported_hashes) > 0)
     if st.button("🔄 Regenerate Note Type Model ID"):
         if has_exported and not st.session_state.model_id_confirm:
             st.session_state.model_id_confirm = True
@@ -1128,12 +1023,9 @@ with st.sidebar:
             st.session_state.model_id         = random.randrange(1 << 30, 1 << 31)
             st.session_state.model_id_confirm = False
             st.success(f"New Model ID: {st.session_state.model_id}")
-
     if st.session_state.model_id_confirm:
-        st.warning(
-            "⚠️ You have exported cards this session. Changing the Model ID creates a new "
-            "Anki note type and may orphan existing cards. **Click again to confirm.**"
-        )
+        st.warning("⚠️ You have exported cards this session. Changing the Model ID creates a new "
+                   "Anki note type and may orphan existing cards. **Click again to confirm.**")
     st.caption(f"Current Model ID: {st.session_state.model_id}")
 
     if st.button("🗑️ Clear Word Cache"):
@@ -1142,12 +1034,9 @@ with st.sidebar:
         st.toast("🗑️ Word cache cleared.")
 
     if not st.session_state.vocab_df.empty:
-        st.download_button(
-            "💾 Backup Database (CSV)",
-            st.session_state.vocab_df.to_csv(index=False).encode('utf-8'),
-            f"vocab_backup_{date.today()}.csv",
-            "text/csv"
-        )
+        st.download_button("💾 Backup Database (CSV)",
+                           st.session_state.vocab_df.to_csv(index=False).encode('utf-8'),
+                           f"vocab_backup_{date.today()}.csv", "text/csv")
 
 # ========================== TABS ==========================
 tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit / Review", "📇 Generate Anki"])
@@ -1160,44 +1049,32 @@ with tab1:
     if add_mode == "Single":
         p_raw      = st.text_input("🔤 Phrase", placeholder="Paste your sentence here...", key="input_phrase")
         v_selected = ""
-
         if p_raw and p_raw not in ["1", "*"]:
             clean_text   = _RE_CLEAN_TEXT.sub('', p_raw)
             unique_words = list(dict.fromkeys([w.lower() for w in clean_text.split() if w.strip()]))
             if unique_words:
                 st.caption("Click words below to extract them as vocabulary:")
                 try:
-                    selected_pills = st.pills(
-                        "Select Vocab", unique_words,
-                        selection_mode="multi", label_visibility="collapsed"
-                    )
+                    selected_pills = st.pills("Select Vocab", unique_words,
+                                              selection_mode="multi", label_visibility="collapsed")
                     v_selected = " ".join(selected_pills) if selected_pills else ""
                 except:
                     selected_words = []
                     cols = st.columns(6)
                     for i, w in enumerate(unique_words):
-                        if cols[i % 6].checkbox(w, key=f"chk_{w}"):
-                            selected_words.append(w)
+                        if cols[i % 6].checkbox(w, key=f"chk_{w}"): selected_words.append(w)
                     v_selected = " ".join(selected_words)
 
         if v_selected and v_selected != st.session_state.input_vocab:
             st.session_state.input_vocab = v_selected
 
         st.text_input("📝 Vocab", placeholder="e.g. serendipity", key="input_vocab")
-
         v_check = st.session_state.input_vocab.lower().strip()
-        if (v_check
-                and not st.session_state.vocab_df.empty
+        if (v_check and not st.session_state.vocab_df.empty
                 and (st.session_state.vocab_df['vocab'] == v_check).any()):
-            st.warning(
-                f"⚠️ '{v_check}' already exists. Saving will overwrite its phrase and reset to 'New'."
-            )
-
-        st.button(
-            "💾 Save to Cloud", type="primary",
-            use_container_width=True, on_click=save_single_word_callback
-        )
-
+            st.warning(f"⚠️ '{v_check}' already exists. Saving will overwrite its phrase and reset to 'New'.")
+        st.button("💾 Save to Cloud", type="primary", use_container_width=True,
+                  on_click=save_single_word_callback)
     else:
         bulk_text = st.text_area("Paste List (word, phrase)", height=150, key="bulk_input")
         if st.button("Preview Bulk Import"):
@@ -1207,10 +1084,8 @@ with tab1:
                 parts = line.split(',', 1)
                 bv    = parts[0].strip().lower()
                 bp    = normalize_phrase(parts[1].strip() if len(parts) > 1 else "")
-                if bv:
-                    new_rows.append({"vocab": bv, "phrase": bp, "status": "New", "tags": ""})
-            if new_rows:
-                st.session_state.bulk_preview_df = pd.DataFrame(new_rows)
+                if bv: new_rows.append({"vocab": bv, "phrase": bp, "status": "New", "tags": ""})
+            if new_rows: st.session_state.bulk_preview_df = pd.DataFrame(new_rows)
 
         if st.session_state.bulk_preview_df is not None:
             st.write("### Preview:")
@@ -1234,7 +1109,7 @@ with tab2:
 
         st.subheader(f"✏️ Edit List ({len(st.session_state.vocab_df)} words)")
 
-        # ── N4-B: Undo last save ──────────────────────────────────────────────
+        # N4-B: Undo last save
         if st.session_state.undo_df is not None:
             if st.button("↩️ Undo Last Save", use_container_width=True):
                 st.session_state.vocab_df = st.session_state.undo_df.copy()
@@ -1242,27 +1117,18 @@ with tab2:
                 save_to_github(st.session_state.vocab_df)
                 st.toast("↩️ Undo applied — previous state restored.", icon="↩️")
                 st.rerun(scope="app")
-        # ─────────────────────────────────────────────────────────────────────
 
         search     = st.text_input("🔎 Search...", "").lower().strip()
         display_df = st.session_state.vocab_df.copy()
         if search:
             display_df = display_df[display_df['vocab'].str.contains(search, case=False)]
 
-        page_size  = 50
-        page       = st.number_input("Page", min_value=1, value=1, step=1)
-        start      = (page - 1) * page_size
-        paginated  = display_df.iloc[start:start + page_size]
+        page_size = 50
+        page      = st.number_input("Page", min_value=1, value=1, step=1)
+        start     = (page - 1) * page_size
+        paginated = display_df.iloc[start:start + page_size]
 
-        # FIX-6: Edit buffer pattern.
-        # Root cause: every data_editor interaction (delete/edit/add) triggers a
-        # @st.fragment rerun. On that rerun, paginated was recomputed fresh from the
-        # unchanged vocab_df and fed back into data_editor as data=, wiping all
-        # in-progress changes — this is why deleted rows reappeared immediately.
-        # Fix: cache a _edit_buffer in session_state keyed by (page, search).
-        # Reset ONLY when the user navigates or searches. Pass the buffer to
-        # data_editor; write editor output back to buffer on every rerun so
-        # edits/deletions persist until Save is clicked.
+        # FIX-6: Edit buffer — prevents fragment reruns from resetting data_editor
         _buf_key = f"_edit_buf_{page}_{search}"
         if st.session_state.get("_edit_buf_key") != _buf_key:
             st.session_state["_edit_buf_key"] = _buf_key
@@ -1271,83 +1137,60 @@ with tab2:
         edited = st.data_editor(
             st.session_state["_edit_buffer"],
             num_rows="dynamic", use_container_width=True, hide_index=True,
-            column_config={
-                "status": st.column_config.SelectboxColumn(
-                    "Status", options=["New", "Done"], required=True
-                )
-            }
+            column_config={"status": st.column_config.SelectboxColumn(
+                "Status", options=["New", "Done"], required=True)}
         )
-        # Persist every editor interaction back to the buffer immediately
         st.session_state["_edit_buffer"] = edited
 
         col_save, col_quality = st.columns(2)
 
         if col_save.button("💾 Save Changes", type="primary", use_container_width=True):
-            # FIX-1: Merge edited paginated slice back into the full vocab_df by index.
-            # Previously: st.session_state.vocab_df = edited  — this DISCARDED all other pages.
-            # Now: update only the rows that were visible on the current page.
             full_df      = st.session_state.vocab_df.copy()
             existing_idx = [i for i in edited.index if i in full_df.index]
             if existing_idx:
-                # Update existing rows in-place using their original DataFrame indices
-                full_df.loc[existing_idx, edited.columns.tolist()] = (
-                    edited.loc[existing_idx].values
-                )
-            # Append brand-new rows added via num_rows="dynamic" (they have new indices)
+                full_df.loc[existing_idx, edited.columns.tolist()] = edited.loc[existing_idx].values
             new_mask = ~edited.index.isin(full_df.index)
             if new_mask.any():
                 full_df = pd.concat([full_df, edited[new_mask]], ignore_index=True)
-
-            # FIX-5: Handle deletions — any row visible in the paginated view that is
-            # absent from edited was explicitly deleted by the user in st.data_editor.
-            # FIX-1 never handled this case; deleted rows silently survived in full_df.
+            # FIX-5: deletions
             deleted_idx = [i for i in paginated.index if i not in edited.index]
             if deleted_idx:
                 full_df = full_df.drop(index=deleted_idx).reset_index(drop=True)
 
             st.session_state.vocab_df = full_df
+            # FIX-7: invalidate edit buffer so next visit reloads from updated vocab_df
+            st.session_state.pop("_edit_buf_key", None)
+            st.session_state.pop("_edit_buffer", None)
             save_to_github(st.session_state.vocab_df)
             st.toast("✅ Cloud updated!")
             st.rerun(scope="app")
 
-        # ── N4-A: CSV Data Quality Report ────────────────────────────────────
+        # N4-A: CSV Data Quality Report
         if col_quality.button("📊 Data Quality", use_container_width=True):
             df    = st.session_state.vocab_df
             total = len(df)
             if total == 0:
                 st.info("No data to analyse.")
             else:
-                with_phrase  = (df['phrase'].astype(str).str.strip() != '').sum()
-                with_tags    = (df['tags'].astype(str).str.strip() != '').sum() \
-                    if 'tags' in df.columns else 0
-                dups         = df['vocab'].duplicated().sum()
-                short_vocab  = (df['vocab'].astype(str).str.strip().str.len() <= 2).sum()
-                done_count   = (df['status'] == 'Done').sum()
-                new_count    = (df['status'] == 'New').sum()
-
+                with_phrase = (df['phrase'].astype(str).str.strip() != '').sum()
+                with_tags   = (df['tags'].astype(str).str.strip() != '').sum() if 'tags' in df.columns else 0
+                dups        = df['vocab'].duplicated().sum()
+                short_vocab = (df['vocab'].astype(str).str.strip().str.len() <= 2).sum()
+                done_count  = (df['status'] == 'Done').sum()
+                new_count   = (df['status'] == 'New').sum()
                 pct = lambda n: f"{n / total * 100:.0f}%"
                 report = pd.DataFrame({
-                    "Metric": [
-                        "Total words", "With phrases", "With tags",
-                        "Duplicate vocab", "Short vocab (≤2 chars)",
-                        "Status: New", "Status: Done"
-                    ],
-                    "Count": [total, with_phrase, with_tags, dups, short_vocab, new_count, done_count],
-                    "%":     ["100%", pct(with_phrase), pct(with_tags),
-                               pct(dups), pct(short_vocab), pct(new_count), pct(done_count)],
+                    "Metric": ["Total words","With phrases","With tags",
+                               "Duplicate vocab","Short vocab (≤2 chars)","Status: New","Status: Done"],
+                    "Count":  [total, with_phrase, with_tags, dups, short_vocab, new_count, done_count],
+                    "%":      ["100%", pct(with_phrase), pct(with_tags), pct(dups),
+                               pct(short_vocab), pct(new_count), pct(done_count)],
                 })
                 st.dataframe(report, hide_index=True, use_container_width=True)
-
-                if dups > 0:
-                    st.warning(f"⚠️ {dups} duplicate vocab entries detected.")
-                if short_vocab > 0:
-                    st.warning(f"⚠️ {short_vocab} entries with vocab ≤2 characters — check for typos.")
+                if dups > 0:        st.warning(f"⚠️ {dups} duplicate vocab entries detected.")
+                if short_vocab > 0: st.warning(f"⚠️ {short_vocab} entries with vocab ≤2 characters.")
                 if total > 0 and with_phrase / total < 0.5:
-                    st.info(
-                        f"💡 Only {pct(with_phrase)} of words have phrases. "
-                        f"Adding context phrases improves AI card quality significantly."
-                    )
-        # ─────────────────────────────────────────────────────────────────────
+                    st.info(f"💡 Only {pct(with_phrase)} of words have phrases. Adding phrases improves card quality.")
 
     render_tab2()
 
@@ -1356,24 +1199,108 @@ with tab3:
     @st.fragment
     def render_tab3():
 
-        if st.session_state.apkg_buffer is not None:
-            st.success("✅ Deck generated! Download below to update your database.")
+        # ══════════════════════════════════════════════════════════════
+        # X2-A PHASE 2: Card editor — raw_notes generated, user edits
+        # before packing into .apkg
+        # ══════════════════════════════════════════════════════════════
+        if st.session_state.editing_notes is not None:
+            st.subheader("✏️ Edit Generated Cards")
+            st.caption(
+                "Review and fix AI output before downloading. "
+                "Edit any field directly — changes are reflected in the final .apkg."
+            )
 
-            # T4-A + N2-D: Live card preview with quality score badge
+            # Build an editable DataFrame from the notes list
+            # Private fields (_quality_score, Tags list) are excluded from the editor
+            EDITABLE_COLS = ["VocabRaw", "Definition", "Collocations",
+                             "RegisterLabel", "Synonyms", "Antonyms", "Mnemonic"]
+            notes_df = pd.DataFrame([
+                {col: n.get(col, "") for col in EDITABLE_COLS}
+                for n in st.session_state.editing_notes
+            ])
+
+            edited_notes_df = st.data_editor(
+                notes_df,
+                num_rows="fixed",
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "VocabRaw":      st.column_config.TextColumn("Vocab",        disabled=True),
+                    "Definition":    st.column_config.TextColumn("Definition",   width="large"),
+                    "Collocations":  st.column_config.TextColumn("Collocations", width="medium"),
+                    "RegisterLabel": st.column_config.SelectboxColumn(
+                        "Register", options=REGISTER_VALUES, required=True),
+                    "Synonyms":      st.column_config.TextColumn("Synonyms",     width="medium"),
+                    "Antonyms":      st.column_config.TextColumn("Antonyms",     width="medium"),
+                    "Mnemonic":      st.column_config.TextColumn("Memory Hook",  width="large"),
+                }
+            )
+
+            # N2-D quality overview for the full set
+            scores  = [n.get("_quality_score", 0) for n in st.session_state.editing_notes]
+            avg_q   = int(sum(scores) / len(scores)) if scores else 0
+            low_q   = sum(1 for s in scores if s < QUALITY_WARN_THRESHOLD)
+            st.info(
+                f"📊 **{len(scores)} cards** · Avg quality: {quality_badge(avg_q)} **{avg_q}/100**"
+                + (f" · ⚠️ {low_q} card(s) below {QUALITY_WARN_THRESHOLD}" if low_q else "")
+            )
+
+            col_pack, col_cancel = st.columns(2)
+
+            if col_pack.button("📦 Pack & Download .apkg", type="primary", use_container_width=True):
+                # Merge edits back into the notes list
+                updated_notes = []
+                for i, note in enumerate(st.session_state.editing_notes):
+                    if i < len(edited_notes_df):
+                        row = edited_notes_df.iloc[i]
+                        note = dict(note)   # shallow copy
+                        note["Definition"]    = str(row.get("Definition", note["Definition"]))
+                        note["Collocations"]  = str(row.get("Collocations", note["Collocations"]))
+                        note["Synonyms"]      = str(row.get("Synonyms", note["Synonyms"]))
+                        note["Antonyms"]      = str(row.get("Antonyms", note["Antonyms"]))
+                        note["Mnemonic"]      = str(row.get("Mnemonic", note.get("Mnemonic", "")))
+                        # X3-C: re-build register badge HTML from edited plain label
+                        new_reg               = str(row.get("RegisterLabel", note.get("RegisterLabel", "Neutral")))
+                        new_reg               = new_reg if new_reg in REGISTER_VALUES else "Neutral"
+                        reg_css               = REGISTER_BADGE_CSS.get(new_reg, REGISTER_BADGE_CSS["Neutral"])
+                        note["RegisterLabel"] = new_reg
+                        note["Register"]      = f'<span class="register-badge" style="{reg_css}">{new_reg}</span>'
+                        note["_quality_score"] = score_card(note)
+                    updated_notes.append(note)
+
+                with st.spinner("🎵 Generating audio & packing .apkg..."):
+                    apkg = create_anki_package(
+                        updated_notes,
+                        st.session_state.editing_deck_name,
+                        generate_audio=st.session_state.editing_audio,
+                        deck_id=st.session_state.deck_id,
+                        include_antonyms=st.session_state.include_antonyms
+                    )
+                st.session_state.apkg_buffer      = apkg.getvalue()
+                st.session_state.processed_vocabs = [n['VocabRaw'] for n in updated_notes]
+                st.session_state.preview_notes    = updated_notes[:3]
+                st.session_state.editing_notes    = None
+                st.rerun(scope="app")
+
+            if col_cancel.button("❌ Discard & Start Over", use_container_width=True):
+                st.session_state.editing_notes = None
+                st.rerun(scope="app")
+            return
+
+        # ══════════════════════════════════════════════════════════════
+        # X2-A PHASE 3: Download state (after pack)
+        # ══════════════════════════════════════════════════════════════
+        if st.session_state.apkg_buffer is not None:
+            st.success("✅ Deck packed! Download below.")
+
             if st.session_state.get("preview_notes"):
                 with st.expander("👁️ Card Preview (first 3 cards)", expanded=True):
                     for i, note in enumerate(st.session_state.preview_notes, 1):
-                        # N2-D: quality badge header
                         q_score = note.get("_quality_score", 0)
                         q_badge = quality_badge(q_score)
-                        st.markdown(
-                            f"**Card {i} — FRONT** &nbsp; {q_badge} Quality: **{q_score}/100**"
-                        )
+                        st.markdown(f"**Card {i} — FRONT** &nbsp; {q_badge} Quality: **{q_score}/100**")
                         if q_score < QUALITY_WARN_THRESHOLD:
-                            st.caption(
-                                f"⚠️ Low quality score ({q_score}/100). "
-                                f"Consider adding a phrase or checking the AI output."
-                            )
+                            st.caption(f"⚠️ Low quality score ({q_score}/100).")
                         front_preview = re.sub(r'\{\{c\d+::(.*?)\}\}', r'[___]', note['Text'])
                         st.markdown(
                             f"<div style='background:#1a1a1a; border:1px solid #00ff41; "
@@ -1383,22 +1310,24 @@ with tab3:
                         )
                         st.markdown(f"**Card {i} — BACK**")
                         back_items = []
-                        if note.get("Pronunciation"): back_items.append(f"🗣️ {note['Pronunciation']}")
-                        if note.get("Definition"):    back_items.append(f"📜 {note['Definition']}")
+                        if note.get("Pronunciation"):   back_items.append(f"🗣️ {note['Pronunciation']}")
+                        if note.get("Definition"):      back_items.append(f"📜 {note['Definition']}")
                         if note.get("Examples"):
                             plain_ex = re.sub(r'<[^>]+>', ' ', note['Examples']).strip()
                             back_items.append(f"🖋️ {plain_ex}")
-                        if note.get("Collocations"):  back_items.append(f"🔗 {note['Collocations']}")
-                        if note.get("Synonyms"):      back_items.append(f"➕ {note['Synonyms']}")
-                        if note.get("Tags"):          back_items.append(f"🏷️ {', '.join(note['Tags'])}")
+                        if note.get("Collocations"):    back_items.append(f"🔗 {note['Collocations']}")
+                        # X3-C: show plain register label (not HTML badge) in preview
+                        if note.get("RegisterLabel"):   back_items.append(f"🏷 {note['RegisterLabel']}")
+                        if note.get("Synonyms"):        back_items.append(f"➕ {note['Synonyms']}")
+                        if note.get("Mnemonic"):        back_items.append(f"💡 {note['Mnemonic']}")
+                        if note.get("Tags"):            back_items.append(f"🔖 {', '.join(note['Tags'])}")
                         st.markdown(
                             "<div style='background:#1a1a1a; border:1px solid #00ffff; "
                             "padding:10px 14px; border-radius:4px; font-family:monospace; "
                             f"color:#aaffaa; line-height:1.8'>{'<br>'.join(back_items)}</div>",
                             unsafe_allow_html=True
                         )
-                        if i < len(st.session_state.preview_notes):
-                            st.divider()
+                        if i < len(st.session_state.preview_notes): st.divider()
 
             st.download_button(
                 "📥 Download .apkg",
@@ -1415,6 +1344,9 @@ with tab3:
                 st.rerun(scope="app")
             return
 
+        # ══════════════════════════════════════════════════════════════
+        # PHASE 1: Normal generation UI
+        # ══════════════════════════════════════════════════════════════
         if st.session_state.vocab_df.empty:
             st.info("Add words first!")
             return
@@ -1430,10 +1362,8 @@ with tab3:
                 f"⚠️ {len(st.session_state.failed_words)} word(s) failed — click to retry",
                 expanded=True
             ):
-                st.dataframe(
-                    pd.DataFrame({"Queued for Retry": st.session_state.failed_words}),
-                    hide_index=True
-                )
+                st.dataframe(pd.DataFrame({"Queued for Retry": st.session_state.failed_words}),
+                             hide_index=True)
                 col_retry, col_dismiss = st.columns(2)
                 if col_retry.button("🔁 Retry Failed Words", type="primary"):
                     retry_df = pd.DataFrame({
@@ -1443,20 +1373,14 @@ with tab3:
                         "tags":   [""] * len(st.session_state.failed_words),
                     })
                     st.session_state.failed_words = []
-                    retry_notes = process_anki_data(
-                        retry_df,
-                        batch_size=st.session_state.last_batch_size,
-                        dry_run=st.session_state.dry_run
-                    )
+                    retry_notes = process_anki_data(retry_df,
+                                                    batch_size=st.session_state.last_batch_size,
+                                                    dry_run=st.session_state.dry_run)
                     if retry_notes:
-                        apkg = create_anki_package(
-                            retry_notes, st.session_state.last_deck_name,
-                            generate_audio=True, deck_id=st.session_state.deck_id,
-                            include_antonyms=st.session_state.include_antonyms
-                        )
-                        st.session_state.apkg_buffer      = apkg.getvalue()
-                        st.session_state.processed_vocabs = [n['VocabRaw'] for n in retry_notes]
-                        st.session_state.preview_notes    = retry_notes[:3]
+                        # X2-A: send retried notes to the editor phase too
+                        st.session_state.editing_notes     = retry_notes
+                        st.session_state.editing_deck_name = st.session_state.last_deck_name
+                        st.session_state.editing_audio     = True
                         st.rerun(scope="app")
                     else:
                         st.error("❌ Retry failed. Check your API quota.")
@@ -1468,31 +1392,25 @@ with tab3:
 
         # T2-B: Deck hierarchy UI
         deck_col1, deck_col2 = st.columns([3, 1])
-        deck_name_raw   = deck_col1.text_input(
-            "📦 Deck Name (use :: for sub-decks)",
-            value=st.session_state.last_deck_name
-        )
+        deck_name_raw   = deck_col1.text_input("📦 Deck Name (use :: for sub-decks)",
+                                               value=st.session_state.last_deck_name)
         deck_parts_raw  = [p.strip() for p in deck_name_raw.split("::") if p.strip()]
         deck_parts      = [_RE_DECK_ILLEGAL.sub("", p) for p in deck_parts_raw]
         deck_name_input = "::".join(deck_parts) if deck_parts else "Vocabulary"
-        if deck_name_raw:
-            st.session_state.last_deck_name = deck_name_input
+        if deck_name_raw: st.session_state.last_deck_name = deck_name_input
         if _RE_DECK_ILLEGAL.search(deck_name_raw.replace("::", "")):
             st.warning("⚠️ Illegal characters removed from deck name.")
         if len(deck_parts) > 1:
             st.caption("📂 Hierarchy: " + " → ".join(deck_parts))
-
         if deck_col2.button("🎲 New Deck ID"):
             st.session_state.deck_id = random.randrange(1 << 30, 1 << 31)
         deck_col2.caption(f"ID: {st.session_state.deck_id}")
 
         requests_left = max(0, 20 - st.session_state.rpd_count)
         raw_batch     = st.slider("⚡ Batch Size (Words per Request)", 1, 15, 10)
-        max_safe      = (
-            max(1, math.ceil(len(subset) / max(1, requests_left)))
-            if requests_left > 0 else 1
-        )
-        batch_size = min(raw_batch, max_safe)
+        max_safe      = (max(1, math.ceil(len(subset) / max(1, requests_left)))
+                         if requests_left > 0 else 1)
+        batch_size    = min(raw_batch, max_safe)
         st.session_state.last_batch_size = batch_size
         st.caption(f"✅ Effective batch size: **{batch_size}** (quota-adjusted from {raw_batch})")
 
@@ -1500,9 +1418,10 @@ with tab3:
         st.session_state.include_antonyms = st.checkbox("➖ Include Antonyms in Card Back",     value=st.session_state.include_antonyms)
         st.session_state.dry_run          = st.checkbox("🔬 Dry Run Mode (simulate, no quota)", value=st.session_state.dry_run)
 
+        # T2-C: Duplicate detection column
         def _is_dup(vocab_raw: str) -> bool:
-            h = hashlib.sha256(str(vocab_raw).lower().encode('utf-8')).hexdigest()[:16]
-            return h in st.session_state.exported_hashes
+            return hashlib.sha256(str(vocab_raw).lower().encode('utf-8')).hexdigest()[:16] \
+                in st.session_state.exported_hashes
 
         subset_display = subset.copy()
         subset_display['Export']             = True
@@ -1515,22 +1434,17 @@ with tab3:
                 "Export": st.column_config.CheckboxColumn("Export?", required=True),
                 "⚠️ Prev. Exported": st.column_config.CheckboxColumn(
                     "Prev. Exported?", disabled=True,
-                    help="This word was already exported to Anki this session."
-                ),
+                    help="This word was already exported to Anki this session."),
             },
             hide_index=True,
             disabled=["vocab", "phrase", "status", "tags", "⚠️ Prev. Exported"]
         )
 
         final_export = edited_export[edited_export['Export'].astype(bool)]
-
-        dup_count = int(final_export['⚠️ Prev. Exported'].astype(bool).sum()) \
+        dup_count    = int(final_export['⚠️ Prev. Exported'].astype(bool).sum()) \
             if '⚠️ Prev. Exported' in final_export.columns else 0
         if dup_count > 0:
-            st.warning(
-                f"⚠️ **{dup_count}** selected word(s) were previously exported this session. "
-                f"Re-importing may create duplicates in Anki unless the deck GUID matches."
-            )
+            st.warning(f"⚠️ **{dup_count}** selected word(s) were previously exported this session.")
 
         if not final_export.empty:
             st.write("### Export Preview")
@@ -1539,8 +1453,8 @@ with tab3:
             per_card_kb = 35.0 if include_audio else 2.5
             est_size_kb = card_count * per_card_kb
             size_label  = f"{est_size_kb / 1024:.2f} MB" if est_size_kb > 1024 else f"{est_size_kb:.1f} KB"
-            audio_note  = "with audio ~35 KB/card" if include_audio else "no audio ~2.5 KB/card"
-            st.info(f"📊 **{card_count} cards** • Est. .apkg size: **{size_label}** ({audio_note})")
+            st.info(f"📊 **{card_count} cards** • Est. .apkg size: **{size_label}** "
+                    f"({'with audio ~35 KB/card' if include_audio else 'no audio ~2.5 KB/card'})")
 
         quota_key = (st.session_state.rpd_count, len(final_export), batch_size)
         if st.session_state._quota_cache_key != quota_key:
@@ -1550,10 +1464,8 @@ with tab3:
             st.session_state._quota_cache_key = quota_key
         requests_left, required_requests = st.session_state._quota_cache
 
-        st.info(
-            f"💡 You have **{requests_left}** API requests left today. "
-            f"This batch requires **{required_requests}** request(s)."
-        )
+        st.info(f"💡 You have **{requests_left}** API requests left today. "
+                f"This batch requires **{required_requests}** request(s).")
 
         if final_export.empty:
             st.warning("Select at least one word to export.")
@@ -1564,68 +1476,49 @@ with tab3:
                 st.session_state.failed_words = []
                 raw_notes = []
                 try:
-                    raw_notes = process_anki_data(
-                        final_export, batch_size=batch_size,
-                        dry_run=st.session_state.dry_run
-                    )
+                    raw_notes = process_anki_data(final_export, batch_size=batch_size,
+                                                  dry_run=st.session_state.dry_run)
                     if raw_notes:
-                        apkg = create_anki_package(
-                            raw_notes, deck_name_input,
-                            generate_audio=include_audio,
-                            deck_id=st.session_state.deck_id,
-                            include_antonyms=st.session_state.include_antonyms
-                        )
-                        st.session_state.apkg_buffer      = apkg.getvalue()
-                        st.session_state.processed_vocabs = [n['VocabRaw'] for n in raw_notes]
-                        st.session_state.preview_notes    = raw_notes[:3]
+                        # X2-A: route to card editor instead of packing immediately
+                        st.session_state.editing_notes     = raw_notes
+                        st.session_state.editing_deck_name = deck_name_input
+                        st.session_state.editing_audio     = include_audio
                         st.rerun(scope="app")
                 except Exception as e:
                     st.error(f"❌ Generation error: {e} — Status rolled back to 'New'.")
                     if raw_notes:
                         failed = [n.get('VocabRaw', '') for n in raw_notes]
                         st.session_state.vocab_df.loc[
-                            st.session_state.vocab_df['vocab'].isin(failed), 'status'
-                        ] = 'New'
+                            st.session_state.vocab_df['vocab'].isin(failed), 'status'] = 'New'
                         save_to_github(st.session_state.vocab_df)
 
-        # ── N4-E: Export History Viewer ──────────────────────────────────────
+        # N4-E: Export History Viewer
         st.divider()
         with st.expander("📜 Export History", expanded=False):
             if st.button("🔄 Load History", use_container_width=True):
-                load_export_history.clear()   # force fresh read on manual refresh
+                load_export_history.clear()
             history = load_export_history()
             if not history:
                 st.info("No export history found. Generate your first deck to start logging.")
             else:
-                # Build a display DataFrame (newest first)
                 rows = []
                 for entry in reversed(history):
-                    ts  = entry.get("timestamp", "")
-                    try:
-                        ts = datetime.fromisoformat(ts).strftime("%Y-%m-%d %H:%M")
-                    except:
-                        pass
+                    ts = entry.get("timestamp", "")
+                    try: ts = datetime.fromisoformat(ts).strftime("%Y-%m-%d %H:%M")
+                    except: pass
                     rows.append({
-                        "Timestamp":  ts,
-                        "Deck":       entry.get("deck_name", ""),
-                        "Cards":      entry.get("card_count", 0),
-                        "Vocab":      ", ".join(entry.get("vocabs", [])[:10])
-                                      + ("…" if len(entry.get("vocabs", [])) > 10 else ""),
+                        "Timestamp": ts, "Deck": entry.get("deck_name", ""),
+                        "Cards":     entry.get("card_count", 0),
+                        "Vocab":     ", ".join(entry.get("vocabs", [])[:10])
+                                     + ("…" if len(entry.get("vocabs", [])) > 10 else ""),
                     })
-                hist_df   = pd.DataFrame(rows)
-                page_size = 10
-                h_page    = st.number_input("History page", min_value=1,
-                                            max_value=max(1, math.ceil(len(hist_df) / page_size)),
-                                            value=1, step=1, key="hist_page")
-                h_start   = (h_page - 1) * page_size
-                st.dataframe(
-                    hist_df.iloc[h_start:h_start + page_size],
-                    hide_index=True, use_container_width=True
-                )
-                st.caption(
-                    f"Showing {min(h_start + page_size, len(hist_df))} of "
-                    f"{len(hist_df)} export records."
-                )
-        # ─────────────────────────────────────────────────────────────────────
+                hist_df  = pd.DataFrame(rows)
+                h_page   = st.number_input("History page", min_value=1,
+                                           max_value=max(1, math.ceil(len(hist_df) / 10)),
+                                           value=1, step=1, key="hist_page")
+                h_start  = (h_page - 1) * 10
+                st.dataframe(hist_df.iloc[h_start:h_start + 10],
+                             hide_index=True, use_container_width=True)
+                st.caption(f"Showing {min(h_start + 10, len(hist_df))} of {len(hist_df)} records.")
 
     render_tab3()
