@@ -247,18 +247,32 @@ def validate_api_key(api_key: str, model_name: str) -> bool:
 def _is_rate_limit(exc: BaseException) -> bool:
     return "429" in str(exc)
 
+# Hard wall-clock timeout — free tier can hang indefinitely without this.
+GEMINI_TIMEOUT_SEC = 45
+
+def _raw_gemini_call(model, prompt: str):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        future = ex.submit(model.generate_content, prompt)
+        try:
+            return future.result(timeout=GEMINI_TIMEOUT_SEC)
+        except concurrent.futures.TimeoutError:
+            raise TimeoutError(
+                f"Gemini did not respond within {GEMINI_TIMEOUT_SEC}s — "
+                "free-tier queue may be overloaded. Please retry."
+            )
+
 if TENACITY_AVAILABLE:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=20, max=60),
-        retry=retry_if_exception(_is_rate_limit),
+        retry=retry_if_exception(_is_rate_limit),   # ONLY retries on 429, not timeouts
         reraise=True
     )
     def _call_gemini(model, prompt: str):
-        return model.generate_content(prompt)
+        return _raw_gemini_call(model, prompt)
 else:
     def _call_gemini(model, prompt: str):
-        return model.generate_content(prompt)
+        return _raw_gemini_call(model, prompt)
 
 # ========================== CLEANING FUNCTIONS ==========================
 def cap_first(s: str) -> str:
@@ -386,10 +400,11 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6, dry_run=Fal
                 f"BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"
             )
 
-            success = False
+            success   = False
+            step_slot = st.empty()   # live step label — tells user exactly which phase is running
 
             if dry_run:
-                st.info(f"🔬 Dry-run: {', '.join(vocab_words)}")
+                step_slot.info(f"🔬 Dry-run: {', '.join(vocab_words)}")
                 mock_data = [
                     {"vocab": v[0], "phrase": v[1], "translation": "mock-" + v[0],
                      "part_of_speech": "Noun", "pronunciation_ipa": "/mock/",
@@ -403,19 +418,25 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6, dry_run=Fal
                 success = True
             else:
                 try:
-                    response = _call_gemini(model, prompt)   # tenacity handles 429 retries
-                    rpd_delta += 1                           # ← count locally; no GitHub write yet
+                    t_call = time.time()
+                    step_slot.info(f"🌐 Batch {idx+1}/{len(batches)}: calling Gemini API… (max {GEMINI_TIMEOUT_SEC}s)")
+                    response = _call_gemini(model, prompt)   # hard timeout inside
+                    call_ms  = int((time.time() - t_call) * 1000)
+                    rpd_delta += 1                           # count locally — one GitHub write at end
+                    step_slot.info(f"🔍 Parsing response… (API took {call_ms}ms)")
                     parsed = robust_json_parse(response.text)
                     if isinstance(parsed, list) and len(parsed) == len(batch_dicts):
                         all_card_data.extend(parsed)
-                        st.markdown(f"✅ **Processed**: `{', '.join(vocab_words)}`")
+                        step_slot.success(f"✅ **Processed**: `{', '.join(vocab_words)}` ({call_ms}ms)")
                         success = True
                     elif isinstance(parsed, list) and parsed:
                         all_card_data.extend(parsed)
-                        st.warning(f"⚠️ Got {len(parsed)}/{len(batch_dicts)} items — accepting partial.")
+                        step_slot.warning(f"⚠️ Got {len(parsed)}/{len(batch_dicts)} items — accepting partial.")
                         success = True
+                except TimeoutError as e:
+                    step_slot.error(f"⏰ Timeout: {e}")
                 except Exception as e:
-                    st.warning(f"⚠️ Batch failed after retries: {e}")
+                    step_slot.warning(f"⚠️ Batch failed: {e}")
 
                 # Enhancement #7: Single-item fallback when full batch fails
                 if not success:
@@ -588,17 +609,25 @@ def render_card_preview(note: dict) -> str:
 
 # ========================== AUDIO HELPER ==========================
 def generate_audio_file(vocab, temp_dir):
+    """gTTS with a 10s hard timeout — a stalled TTS request can no longer hang the thread."""
     try:
-        clean_vocab    = re.sub(r'[^a-zA-Z0-9\s\-\']', '', vocab).strip()
+        clean_vocab    = re.sub(r"[^a-zA-Z0-9 \-']", '', vocab).strip()
         clean_filename = re.sub(r'[^a-zA-Z0-9]', '', clean_vocab) + ".mp3"
         file_path      = os.path.join(temp_dir, clean_filename)
         if clean_vocab:
-            tts = gTTS(text=clean_vocab, lang='en', slow=False)
-            tts.save(file_path)
+            def _do_tts():
+                tts = gTTS(text=clean_vocab, lang='en', slow=False)
+                tts.save(file_path)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(_do_tts)
+                fut.result(timeout=10)
             return vocab, clean_filename, file_path
+    except concurrent.futures.TimeoutError:
+        print(f"gTTS timeout for '{vocab}' — skipping audio.")
     except Exception as e:
         print(f"Audio error for {vocab}: {e}")
     return vocab, None, None
+
 
 # ========================== GENANKI LOGIC ==========================
 def create_anki_package(notes_data, deck_name, generate_audio=True,
