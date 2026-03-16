@@ -356,6 +356,72 @@ def load_export_history() -> list:
         return data if isinstance(data, list) else []
     except: return []
 
+
+# ========================== Z1-C: WORD CACHE PERSISTENCE ==========================
+_WORD_CACHE_FILE = "word_cache.json"
+_WORD_CACHE_TTL_DAYS = 30    # entries older than this are pruned on load
+_WORD_CACHE_MAX      = 500   # cap to prevent unbounded growth
+
+def _bg_save_word_cache(word_cache: dict):
+    """
+    Z1-C: Background writer for word_cache.json on GitHub.
+    Caps at 500 entries (oldest pruned first via insertion order).
+    Adds a 'cached_at' ISO timestamp to each entry for TTL pruning.
+    """
+    now_str = datetime.now().isoformat()
+    # Stamp entries that don't have a timestamp yet
+    stamped = {}
+    for k, v in word_cache.items():
+        entry = dict(v)
+        if '_cached_at' not in entry:
+            entry['_cached_at'] = now_str
+        stamped[k] = entry
+    # Cap to latest 500 entries (dict is ordered in Python 3.7+)
+    if len(stamped) > _WORD_CACHE_MAX:
+        stamped = dict(list(stamped.items())[-_WORD_CACHE_MAX:])
+    data = json.dumps(stamped, ensure_ascii=False)
+    try:
+        try:
+            file = repo.get_contents(_WORD_CACHE_FILE)
+            repo.update_file(file.path, "Update word cache", data, file.sha)
+        except GithubException as e:
+            if e.status == 404:
+                repo.create_file(_WORD_CACHE_FILE, "Init word cache", data)
+    except Exception as e:
+        print(f"Word cache save error: {e}")
+
+def save_word_cache(word_cache: dict):
+    """Z1-C: Non-blocking word cache save."""
+    _get_gh_executor().submit(_bg_save_word_cache, dict(word_cache))
+
+@st.cache_data(ttl=3600)
+def load_word_cache() -> dict:
+    """
+    Z1-C: Loads word_cache.json from GitHub on cold boot (cached 1h).
+    Prunes entries older than _WORD_CACHE_TTL_DAYS.
+    Returns clean dict ready for session_state.word_cache.
+    """
+    try:
+        file = repo.get_contents(_WORD_CACHE_FILE)
+        data = json.loads(file.decoded_content.decode('utf-8'))
+        if not isinstance(data, dict):
+            return {}
+        cutoff = datetime.now().timestamp() - (_WORD_CACHE_TTL_DAYS * 86400)
+        pruned = {}
+        for k, v in data.items():
+            if not isinstance(v, dict):
+                continue
+            cached_at_str = v.get('_cached_at', '')
+            try:
+                cached_ts = datetime.fromisoformat(cached_at_str).timestamp()
+                if cached_ts >= cutoff:
+                    pruned[k] = v
+            except:
+                pruned[k] = v   # no timestamp → keep (backward compat)
+        return pruned
+    except:
+        return {}
+
 # ========================== A5: SMART RPM ENFORCEMENT ==========================
 def enforce_rpm() -> float:
     t0  = time.perf_counter()
@@ -558,6 +624,10 @@ def generate_anki_card_data_batched(
     checkpoint = st.session_state.get("generation_checkpoint", [])
     if checkpoint:
         all_new_data = list(checkpoint)
+        # BUG-C: Remove any cached_results whose vocab already appears in checkpoint
+        # to prevent duplicates in the final return value.
+        _ckpt_vocabs = {c.get('vocab', '').strip().lower() for c in all_new_data}
+        cached_results = [c for c in cached_results if c.get('vocab', '').strip().lower() not in _ckpt_vocabs]
 
     with st.status("🤖 Processing AI Batches (RPM Throttled)...", expanded=True) as status_log:
         progress_bar = st.progress(0)
@@ -694,6 +764,8 @@ BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}"""
         st.session_state.generation_checkpoint = []
 
     st.session_state.word_cache = word_cache
+    # Z1-C: persist updated word cache to GitHub non-blocking
+    save_word_cache(word_cache)
     if timings:
         with st.expander("⏱️ Batch Performance Timings", expanded=False):
             st.dataframe(pd.DataFrame(timings), hide_index=True)
@@ -899,8 +971,9 @@ def create_anki_package(
         model_type=genanki.Model.CLOZE
     )
 
-    # Y2-A: Reversed card Basic model (separate from CLOZE)
-    reversed_model_id = (model_id + 7919) % (1 << 31)
+    # Y2-A: Reversed card Basic model — BUG-F: now sourced from session_state
+    # so it stays stable even if model_id is regenerated mid-session.
+    reversed_model_id = st.session_state.get("reversed_model_id", (model_id + 7919) % (1 << 31))
     rev_front = """<div class="vellum-focus-container front">
 <div class="prompt-text" style="color:#ffff66">{{Translation}}</div>
 {{#Pronunciation}}<div style="color:#aaffaa;font-size:0.9em;margin-top:8px">{{Pronunciation}}</div>{{/Pronunciation}}
@@ -1068,10 +1141,13 @@ st.session_state.setdefault("bulk_preview_df",         None)
 st.session_state.setdefault("apkg_buffer",             None)
 st.session_state.setdefault("processed_vocabs",        [])
 st.session_state.setdefault("model_id",                1607392319)
+st.session_state.setdefault("reversed_model_id",       (1607392319 + 7919) % (1 << 31))  # BUG-F
 st.session_state.setdefault("include_antonyms",        True)
 st.session_state.setdefault("dry_run",                 False)
 st.session_state.setdefault("processed_cache",         {})
-st.session_state.setdefault("word_cache",              {})
+# Z1-C: restore persisted word cache on cold boot
+_init_word_cache = load_word_cache() if "word_cache" not in st.session_state else st.session_state.word_cache
+st.session_state.setdefault("word_cache",              _init_word_cache)
 st.session_state.setdefault("input_phrase",            "")
 st.session_state.setdefault("input_vocab",             "")
 st.session_state.setdefault("_quota_cache_key",        None)
@@ -1212,8 +1288,10 @@ with st.sidebar:
         if has_exported and not st.session_state.model_id_confirm:
             st.session_state.model_id_confirm = True
         else:
-            st.session_state.model_id         = random.randrange(1 << 30, 1 << 31)
-            st.session_state.model_id_confirm = False
+            new_mid = random.randrange(1 << 30, 1 << 31)
+            st.session_state.model_id          = new_mid
+            st.session_state.reversed_model_id = (new_mid + 7919) % (1 << 31)  # BUG-F
+            st.session_state.model_id_confirm  = False
             st.success(f"New Model ID: {st.session_state.model_id}")
     if st.session_state.model_id_confirm:
         st.warning("⚠️ Changing Model ID may orphan existing Anki cards. **Click again to confirm.**")
@@ -1223,6 +1301,9 @@ with st.sidebar:
         st.session_state.word_cache            = {}
         st.session_state.processed_cache       = {}
         st.session_state.generation_checkpoint = []
+        st.session_state["_gap_cache_key"]     = None  # BUG-D: invalidate gap cache too
+        load_word_cache.clear()   # Z1-C: invalidate @st.cache_data so next load is fresh
+        save_word_cache({})       # Z1-C: persist empty cache to GitHub
         st.toast("🗑️ Cache cleared.")
 
     if not st.session_state.vocab_df.empty:
@@ -1240,8 +1321,11 @@ with tab1:
     done_words   = st.session_state.vocab_df[st.session_state.vocab_df['status'] == 'Done']['vocab'].tolist()
     cached_done  = [w for w in done_words if w in st.session_state.word_cache]
     if len(cached_done) >= 5:
-        random.seed(date.today().toordinal())
-        wotd      = random.choice(cached_done)
+        # BUG-A: Use a LOCAL Random instance to avoid poisoning the global random module.
+        # The old random.seed() made sidebar "New Deck ID" / "Regenerate Model ID" buttons
+        # produce the same deterministic value all day.
+        _local_rng = random.Random(date.today().toordinal())
+        wotd       = _local_rng.choice(cached_done)
         wotd_data = st.session_state.word_cache.get(wotd, {})
         wotd_def  = wotd_data.get("definition_english", "")
         wotd_ipa  = wotd_data.get("pronunciation_ipa", "")
@@ -1252,7 +1336,14 @@ with tab1:
             if wotd_mnem: st.caption(f"💡 {wotd_mnem}")
 
     # Y3-B: Vocab gap detector advisory
-    gaps = detect_vocab_gaps(st.session_state.word_cache)
+    # BUG-D: Cache the O(n²) gap detection result keyed by word_cache size.
+    # Previously ran on every full app rerun; now only recalculates when
+    # word_cache changes (new words added or cache cleared).
+    _gap_cache_key = len(st.session_state.word_cache)
+    if st.session_state.get("_gap_cache_key") != _gap_cache_key:
+        st.session_state["_gap_cache_key"] = _gap_cache_key
+        st.session_state["_gap_cache"]     = detect_vocab_gaps(st.session_state.word_cache)
+    gaps = st.session_state["_gap_cache"]
     if gaps:
         with st.expander(f"🔍 Vocab Gap Alert ({len(gaps)} synonym cluster{'s' if len(gaps)>1 else ''})",
                          expanded=False):
@@ -1352,12 +1443,15 @@ with tab1:
                     with st.spinner("🤖 Generating example sentences..."):
                         phrase_map = enrich_empty_phrases(empty_vocabs)
                     if phrase_map:
-                        for idx_r, row in st.session_state.bulk_preview_df.iterrows():
-                            vk = str(row['vocab']).strip().lower()
-                            if vk in phrase_map and not str(row['phrase']).strip():
-                                st.session_state.bulk_preview_df.at[idx_r, 'phrase'] = phrase_map[vk]
-                        st.success(f"✅ Filled {len(phrase_map)} phrase(s).")
-                        st.rerun()
+                        # BUG-E: vectorized assignment replaces iterrows() O(n) loop
+                        _df = st.session_state.bulk_preview_df
+                        _vk_series = _df['vocab'].astype(str).str.strip().str.lower()
+                        _ph_series = _df['phrase'].astype(str).str.strip()
+                        _mask      = _vk_series.isin(phrase_map) & (_ph_series == '')
+                        _df.loc[_mask, 'phrase'] = _vk_series[_mask].map(phrase_map)
+                        st.session_state.bulk_preview_df = _df
+                        st.success(f"✅ Filled {int(_mask.sum())} phrase(s).")
+                        st.rerun(scope="app")   # BUG-B: was bare st.rerun()
 
             if st.button("💾 Confirm & Process Bulk", type="primary"):
                 added = len(st.session_state.bulk_preview_df)
@@ -1368,7 +1462,7 @@ with tab1:
                 st.success(f"✅ Added {added} words!")
                 st.session_state.session_words_added += added
                 st.session_state.bulk_preview_df = None
-                st.rerun()
+                st.rerun(scope="app")   # BUG-B: was bare st.rerun()
 
 # ──────────────────────────── TAB 2 ────────────────────────────
 with tab2:
@@ -1546,6 +1640,20 @@ with tab3:
                 + (f" · ⚠️ {low_q} card(s) below {QUALITY_WARN_THRESHOLD}" if low_q else "")
             )
 
+            # Z3-B: Antonym advisory — flag cards with ≥3 synonyms but 0 antonyms
+            # Pure local analysis on existing note data; zero API calls.
+            _antonym_gaps = [
+                n['VocabRaw'] for n in st.session_state.editing_notes
+                if (len([s for s in n.get('Synonyms', '').split(',') if s.strip()]) >= 3
+                    and not n.get('Antonyms', '').strip())
+            ]
+            if _antonym_gaps:
+                st.warning(
+                    f"⚠️ **{len(_antonym_gaps)} card(s)** have ≥3 synonyms but no antonyms: "
+                    f"`{', '.join(_antonym_gaps[:5])}{'...' if len(_antonym_gaps) > 5 else ''}`. "
+                    f"Consider adding antonyms in the Antonyms column above."
+                )
+
             # Y4-G: Export card data as CSV
             csv_export_cols = ["VocabRaw", "Definition", "Collocations", "RegisterLabel",
                                "Synonyms", "Antonyms", "Mnemonic", "Etymology"]
@@ -1700,6 +1808,32 @@ with tab3:
         if subset.empty:
             st.warning("⚠️ No 'New' words to export! All words are marked 'Done'."); return
 
+        # Z3-D: Part-of-speech filter — only shown when word_cache has ≥5 entries
+        # with POS data; reads entirely from local cache, zero API calls.
+        _pos_in_cache = sorted({
+            str(st.session_state.word_cache.get(v, {}).get('part_of_speech', '') or '').title()
+            for v in subset['vocab'].str.strip().str.lower()
+            if str(st.session_state.word_cache.get(v, {}).get('part_of_speech', '')).strip()
+        })
+        if len(_pos_in_cache) >= 2:
+            _pos_filter = st.multiselect(
+                "🔠 Filter by Part of Speech (optional)",
+                options=_pos_in_cache,
+                default=[],
+                help="Leave blank to include all parts of speech."
+            )
+            if _pos_filter:
+                _matching_vocabs = {
+                    v for v in subset['vocab'].str.strip().str.lower()
+                    if str(st.session_state.word_cache.get(v, {}).get('part_of_speech', '') or '').title()
+                    in _pos_filter
+                }
+                subset = subset[subset['vocab'].str.strip().str.lower().isin(_matching_vocabs)]
+                if subset.empty:
+                    st.warning("⚠️ No New words match the selected POS filter.")
+                    return
+                st.caption(f"🔠 Showing **{len(subset)}** word(s) matching: {', '.join(_pos_filter)}")
+
         # T1-B: Failed words retry panel with Y1-B delay selector
         if st.session_state.failed_words:
             with st.expander(
@@ -1763,11 +1897,29 @@ with tab3:
         deck_col2.caption(f"ID: {st.session_state.deck_id}")
 
         requests_left = max(0, 20 - st.session_state.rpd_count)
-        raw_batch     = st.slider("⚡ Batch Size (Words per Request)", 1, 15, 10)
-        max_safe      = max(1, math.ceil(len(subset) / max(1, requests_left))) if requests_left > 0 else 1
+
+        # Z4-D: Smart batch size recommendation engine.
+        # Recommends a value that uses 60% of remaining quota for this export,
+        # bounded by [1, 15]. User can still override with the slider.
+        _n_words    = len(subset)
+        _r_left     = max(1, requests_left)
+        _recommended = min(15, max(1, math.ceil(_n_words / max(1, int(_r_left * 0.6)))))
+        raw_batch    = st.slider(
+            "⚡ Batch Size (Words per Request)", 1, 15, _recommended,
+            help=f"Recommended **{_recommended}** — uses ~{math.ceil(_n_words / _recommended)} "
+                 f"of your {requests_left} remaining requests (60% quota rule)."
+        )
+        if raw_batch == _recommended:
+            st.caption(f"✅ Using recommended batch size **{_recommended}** "
+                       f"({math.ceil(_n_words / _recommended)} request(s) needed).")
+        else:
+            st.caption(f"⚙️ Custom batch size: **{raw_batch}** "
+                       f"(recommended was {_recommended}).")
+        max_safe      = max(1, math.ceil(_n_words / max(1, requests_left))) if requests_left > 0 else 1
         batch_size    = min(raw_batch, max_safe)
         st.session_state.last_batch_size = batch_size
-        st.caption(f"✅ Effective batch size: **{batch_size}** (quota-adjusted from {raw_batch})")
+        if batch_size != raw_batch:
+            st.caption(f"⚠️ Capped to **{batch_size}** by quota limit.")
 
         include_audio                     = st.checkbox("🔊 Generate Audio Files",              value=True)
         include_reversed                  = st.checkbox("🔄 Include Reversed Cards (Translation→Word)",  # Y2-A
