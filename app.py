@@ -272,6 +272,153 @@ CYBERPUNK_CSS = f"""
 }}
 """
 
+
+# ========================== N2-C: CARD THEME DEFINITIONS ==========================
+
+# ── MINIMAL THEME ──────────────────────────────────────────────────────────────
+# Clean, paper-white aesthetic. Inter/system-ui sans-serif. Subtle warm shadows.
+# High contrast for readability. Restrained colour palette: charcoal + accent blue.
+MINIMAL_CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+.card {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 16px; line-height: 1.65; color: #1a1a2e;
+    background: #fefefe;
+    background-image: linear-gradient(135deg, #fefefe 0%, #f7f9fc 100%);
+    padding: 28px 24px; text-align: left;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+.vellum-focus-container {
+    background: #ffffff; padding: 28px 24px; margin: 0 auto 32px;
+    border-radius: 10px;
+    border: 1.5px solid #e2e8f0;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06), 0 0 0 1px rgba(99,102,241,0.08);
+    text-align: center;
+}
+.prompt-text {
+    font-family: 'Inter', sans-serif; font-size: 1.9em; font-weight: 700;
+    color: #1a1a2e; letter-spacing: -0.02em; line-height: 1.2;
+}
+.cloze {
+    color: #ffffff; background-color: #4f46e5;
+    padding: 2px 8px; border-radius: 4px; font-weight: 600;
+}
+.solved-text .cloze {
+    color: #4f46e5; background: rgba(79,70,229,0.08);
+    border-bottom: 2px solid #4f46e5; font-weight: 600;
+}
+.vellum-section {
+    margin: 12px 0; padding: 10px 0;
+    border-bottom: 1px solid #f1f5f9;
+}
+.vellum-section:last-of-type { border-bottom: none; }
+.section-header {
+    font-size: 0.72em; font-weight: 600; color: #64748b;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    margin-bottom: 4px;
+}
+.content { color: #334155; padding-left: 0; font-size: 0.97em; }
+.register-badge {
+    display: inline-block; font-size: 0.68em; font-weight: 600;
+    padding: 1px 8px; border-radius: 99px; letter-spacing: 0.06em;
+    text-transform: uppercase; margin-left: 6px;
+    background: rgba(99,102,241,0.1);
+}
+@media (max-width: 480px) {
+    .card { font-size: 15px; padding: 16px; }
+    .vellum-focus-container { padding: 16px; }
+}
+"""
+
+# ── ACADEMIC THEME ─────────────────────────────────────────────────────────────
+# Warm parchment tone. Merriweather serif headings + Source Serif body.
+# Dictionary / textbook aesthetic. Deep navy + terracotta accent.
+ACADEMIC_CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Merriweather:wght@400;700;900&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap');
+.card {
+    font-family: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+    font-size: 16px; line-height: 1.75; color: #2c2416;
+    background: #fdf8ef;
+    background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23c8a96e' fill-opacity='0.06'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+    padding: 28px 24px; text-align: left;
+}
+.vellum-focus-container {
+    background: #fffdf7; padding: 24px 20px; margin: 0 auto 28px;
+    border-radius: 2px;
+    border-top: 4px solid #8b3a2a;
+    border-bottom: 1px solid #d4b896;
+    border-left: 1px solid #e8d9c0;
+    border-right: 1px solid #e8d9c0;
+    box-shadow: 0 2px 8px rgba(139,58,42,0.08);
+    text-align: center;
+}
+.prompt-text {
+    font-family: 'Merriweather', Georgia, serif; font-size: 1.75em; font-weight: 900;
+    color: #1c1206; letter-spacing: -0.01em;
+    text-shadow: none;
+}
+.cloze {
+    color: #fffdf7; background-color: #8b3a2a;
+    padding: 1px 6px; border-radius: 2px; font-style: normal;
+}
+.solved-text .cloze {
+    color: #8b3a2a; background: rgba(139,58,42,0.08);
+    border-bottom: 2px solid #8b3a2a;
+}
+.vellum-section {
+    margin: 10px 0; padding: 8px 0;
+    border-bottom: 1px dashed #d4b896;
+}
+.vellum-section:last-of-type { border-bottom: none; }
+.section-header {
+    font-family: 'Merriweather', serif; font-size: 0.68em;
+    font-weight: 700; color: #8b3a2a;
+    text-transform: uppercase; letter-spacing: 0.1em;
+    margin-bottom: 4px;
+}
+.content { color: #2c2416; padding-left: 0; }
+.register-badge {
+    display: inline-block; font-size: 0.68em; font-weight: 600;
+    padding: 1px 7px; border-radius: 2px; letter-spacing: 0.07em;
+    text-transform: uppercase; margin-left: 6px;
+    background: rgba(139,58,42,0.1);
+}
+@media (max-width: 480px) {
+    .card { font-size: 15px; padding: 16px; }
+    .vellum-focus-container { padding: 14px; }
+}
+"""
+
+# ── THEME REGISTRY ──────────────────────────────────────────────────────────────
+CARD_THEMES: dict[str, dict] = {
+    "🟢 Cyberpunk": {
+        "css":         None,          # filled below after CYBERPUNK_CSS is defined
+        "description": "Dark matrix, glowing green borders",
+        "front_color": "#ffffff",
+        "accent":      "#00ff41",
+    },
+    "⬜ Minimal": {
+        "css":         MINIMAL_CSS,
+        "description": "Clean white, indigo accents, modern sans-serif",
+        "front_color": "#1a1a2e",
+        "accent":      "#4f46e5",
+    },
+    "📖 Academic": {
+        "css":         ACADEMIC_CSS,
+        "description": "Warm parchment, serif fonts, dictionary style",
+        "front_color": "#1c1206",
+        "accent":      "#8b3a2a",
+    },
+}
+
+# N2-C: Fill Cyberpunk entry now that CYBERPUNK_CSS is defined
+CARD_THEMES["🟢 Cyberpunk"]["css"] = CYBERPUNK_CSS
+
+def get_active_css() -> str:
+    """N2-C: Returns CSS string for the currently selected card theme."""
+    theme_key = st.session_state.get("card_theme", "🟢 Cyberpunk")
+    return CARD_THEMES.get(theme_key, CARD_THEMES["🟢 Cyberpunk"])["css"] or CYBERPUNK_CSS
+
 # ========================== C12: BACKGROUND GITHUB EXECUTOR ==========================
 @st.cache_resource
 def _get_gh_executor():
@@ -922,7 +1069,7 @@ def create_anki_package(
             {'name': 'Audio'},
         ],
         templates=[{'name': 'Card 1', 'qfmt': front_html, 'afmt': back_html}],
-        css=CYBERPUNK_CSS,
+        css=get_active_css(),   # N2-C: theme-aware CSS
         model_type=genanki.Model.CLOZE
     )
 
@@ -947,7 +1094,7 @@ def create_anki_package(
         fields=[{'name': 'Translation'}, {'name': 'Pronunciation'},
                 {'name': 'VocabWord'},   {'name': 'Definition'}, {'name': 'Mnemonic'}],
         templates=[{'name': 'Reversed', 'qfmt': rev_front, 'afmt': rev_back}],
-        css=CYBERPUNK_CSS,
+        css=get_active_css(),   # N2-C: theme-aware CSS
     )
 
     my_deck     = genanki.Deck(deck_id, deck_name)
@@ -1135,6 +1282,7 @@ st.session_state.setdefault("_quota_reset_warned",     False)   # Z1-B
 st.session_state.setdefault("session_api_calls_start", _init_rpd)  # X1-D
 st.session_state.setdefault("_boot_profiled",          False)   # X1-B
 st.session_state.setdefault("back_section_order",      list(BACK_SECTIONS_DEFAULT))  # Z2-E
+st.session_state.setdefault("card_theme",             "🟢 Cyberpunk")  # N2-C
 
 # Y4-D: Light mode CSS injection
 if st.session_state.light_mode:
@@ -1271,6 +1419,18 @@ with st.sidebar:
                  help="Adds Translation2 field for a second target language on every card.")
     if st.session_state.target_lang2 != "None (disabled)":
         st.caption(f"📌 Rule 13 active: Translation2 → {st.session_state.target_lang2}")
+
+    # N2-C: Card theme selector
+    st.divider()
+    st.selectbox(
+        "🎨 Card Theme",
+        options=list(CARD_THEMES.keys()),
+        index=list(CARD_THEMES.keys()).index(st.session_state.get("card_theme", "🟢 Cyberpunk")),
+        key="card_theme",
+        help="Changes the visual style of your Anki cards."
+    )
+    _active_theme = CARD_THEMES[st.session_state.card_theme]
+    st.caption(f"_{_active_theme['description']}_")
 
     # Z2-E: Card back section reorder
     with st.expander("🃏 Card Back Section Order", expanded=False):
@@ -1679,10 +1839,16 @@ with tab3:
                         front_preview = re.sub(r'\{\{c\d+::(.*?)\}\}', r'[___]', note['Text'])
                         plain_front   = re.sub(r'<[^>]+>', ' ', front_preview).strip()
                         if show_styled:
-                            st.markdown(f"<style>{CYBERPUNK_CSS}</style>"
-                                        f"<div class='card vellum-focus-container'>"
-                                        f"<div class='prompt-text'>{front_preview}</div></div>",
-                                        unsafe_allow_html=True)
+                            # N2-C: use active theme CSS for preview
+                            _preview_css    = get_active_css()
+                            _preview_accent = CARD_THEMES[st.session_state.get("card_theme", "🟢 Cyberpunk")]["accent"]
+                            _preview_fg     = CARD_THEMES[st.session_state.get("card_theme", "🟢 Cyberpunk")]["front_color"]
+                            st.markdown(
+                                f"<style>{_preview_css}</style>"
+                                f"<div class='card vellum-focus-container'>"
+                                f"<div class='prompt-text' style='color:{_preview_fg}'>{front_preview}</div></div>",
+                                unsafe_allow_html=True
+                            )
                         else:
                             st.markdown(f"<div style='background:#1a1a1a; border:1px solid #00ff41; "
                                         f"padding:10px 14px; border-radius:4px; font-family:monospace; "
