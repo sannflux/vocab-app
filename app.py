@@ -1241,14 +1241,29 @@ def create_anki_package(notes_data, deck_name, generate_audio=True, deck_id=2059
                 st.caption(f"⏱️ Sentence audio: {time.perf_counter()-t_sent:.2f}s for {len(sent_audio_map)} sentences")
 
         if generate_images:
-            t_img    = time.perf_counter()
-            img_args = [(n['VocabRaw'], n.get('_unsplash_url',''), temp_dir) for n in notes_data]
+            t_img       = time.perf_counter()
+            needs_refetch = [(n['VocabRaw'], n) for n in notes_data
+                             if not n.get('_unsplash_url','') and UNSPLASH_ACCESS_KEY]
+            if needs_refetch:
+                st.caption(f"🔄 Re-fetching {len(needs_refetch)} missing Unsplash URL(s)…")
+                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as exc:
+                    refetched = list(exc.map(fetch_unsplash_url,
+                                             [(vk, UNSPLASH_ACCESS_KEY) for vk, _ in needs_refetch]))
+                for (vk, note), url in zip(needs_refetch, refetched):
+                    if url:
+                        note['_unsplash_url'] = url
+            img_args    = [(n['VocabRaw'], n.get('_unsplash_url',''), temp_dir) for n in notes_data]
+            failed_imgs = []
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as exc:
                 for vk, fn, fp in exc.map(download_image_file, img_args):
                     if fn:
                         media_files.append(fp)
                         image_map[vk] = fn
-            st.caption(f"⏱️ Images: {time.perf_counter()-t_img:.2f}s · {len(image_map)} downloaded")
+                    else:
+                        failed_imgs.append(vk)
+            st.caption(f"⏱️ Images: {time.perf_counter()-t_img:.2f}s · {len(image_map)} downloaded · {len(failed_imgs)} failed")
+            if failed_imgs:
+                st.warning(f"⚠️ Image download failed for: `{', '.join(failed_imgs)}` — cards will show no image (not broken icon).")
 
         all_fields_check = ['Definition','Examples','Collocations','Synonyms',
                             'Antonyms','Mnemonic','Romanization','Translation2','Hint']
