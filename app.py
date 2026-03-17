@@ -15,28 +15,6 @@ import concurrent.futures
 import math
 import requests
 
-# ── [TURBO C1] orjson with stdlib fallback — 5-10× faster JSON encode/decode ──
-try:
-    import orjson as _orjson
-    _HAS_ORJSON = True
-except ImportError:
-    _HAS_ORJSON = False
-
-def _fast_loads(s):
-    if _HAS_ORJSON:
-        return _orjson.loads(s)
-    return json.loads(s)
-
-def _fast_dumps(obj, indent: int = None) -> str:
-    if _HAS_ORJSON:
-        try:
-            opts = _orjson.OPT_INDENT_2 if indent else None
-            return _orjson.dumps(obj, option=opts).decode('utf-8')
-        except Exception:
-            pass
-    return json.dumps(obj, ensure_ascii=False, indent=indent)
-# ── end TURBO C1 ──────────────────────────────────────────────────────────────
-
 try:
     from gtts import gTTS
     import genanki
@@ -55,8 +33,6 @@ TEXT_COLOR  = "#aaffaa"
 _SPIN = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"]
 
 CHANGELOG = [
-    ("v3.3", "🚀 Parallel cold boot (3× faster start) · 🌊 Streaming Gemini live counter · all v3.2 upgrades"),
-    ("v3.2", "⚡ orjson · 🔑 GitHub SHA cache · 📊 Live card counter + ETA · 🔊 2× faster audio · 11 speed upgrades"),
     ("v3.1", "🖼️ Unsplash images · 🎨 POS badges · 🗣️ Pron guide · 🧠 4× smarter prompts"),
     ("v3.0", "🌸 Pastel theme · 📱 Mobile ↑↓ section reorder · 🐢 Slow audio"),
     ("v2.9", "💭 Hint field · 🎴 Cloze sentence mode · 🏷️ needs_review auto-tag"),
@@ -246,7 +222,7 @@ _FEW_SHOT_POOL = [
 
 def _get_few_shot_examples() -> str:
     picks = random.sample(_FEW_SHOT_POOL, min(2, len(_FEW_SHOT_POOL)))
-    return _fast_dumps(picks)
+    return json.dumps(picks, ensure_ascii=False)
 
 TPM_WARN_THRESHOLD  = 700_000
 TPM_BLOCK_THRESHOLD = 850_000
@@ -259,41 +235,6 @@ def _gh_write_tick():
 
 def gh_write_count() -> int:
     return len(_GH_WRITE_LOG)
-
-# ── [TURBO B3] GitHub SHA cache — eliminates GET-before-UPDATE on every write ──
-_GH_SHA_CACHE: dict[str, str] = {}
-
-def _gh_smart_write(path: str, message: str, data: str) -> None:
-    for attempt in range(3):
-        sha = _GH_SHA_CACHE.get(path)
-        try:
-            if sha:
-                res = repo.update_file(path, message, data, sha)
-                _GH_SHA_CACHE[path] = res['content'].sha
-            else:
-                try:
-                    file = repo.get_contents(path)
-                    _GH_SHA_CACHE[path] = file.sha
-                    res  = repo.update_file(path, message, data, file.sha)
-                    _GH_SHA_CACHE[path] = res['content'].sha
-                except GithubException as e:
-                    if e.status == 404:
-                        res = repo.create_file(path, message, data)
-                        _GH_SHA_CACHE[path] = res['content'].sha
-                    else:
-                        raise
-            _gh_write_tick()
-            return
-        except GithubException as e:
-            if e.status == 409:
-                _GH_SHA_CACHE.pop(path, None)
-                time.sleep(1 + attempt)
-            elif attempt == 2:
-                print(f"GH write failed [{path}]: {e}")
-                return
-            else:
-                time.sleep(1 + attempt)
-# ── end TURBO B3 ──────────────────────────────────────────────────────────────
 
 def word_frequency_label(vocab: str) -> str:
     n = len(str(vocab).strip())
@@ -384,7 +325,7 @@ def download_image_file(args) -> tuple:
     try:
         resp = requests.get(
             image_url, timeout=10, stream=True,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; VocabApp/3.3)"},
+            headers={"User-Agent": "Mozilla/5.0 (compatible; VocabApp/3.1)"},
         )
         if resp.status_code == 200:
             clean_base  = _RE_CLEAN_FNAME.sub("", vocab_raw)
@@ -394,6 +335,7 @@ def download_image_file(args) -> tuple:
                 for chunk in resp.iter_content(8192):
                     f.write(chunk)
             if os.path.getsize(file_path) < 500:
+                print(f"Image too small for '{vocab_raw}' — likely an error page.")
                 return vocab_raw, None, None
             return vocab_raw, clean_fname, file_path
     except Exception as exc:
@@ -507,101 +449,74 @@ repo = get_repo()
 _BOOT_T_GH_DONE  = time.perf_counter()
 
 _COMBINED_USAGE_FILE = "usage_combined.json"
-_WORD_CACHE_FILE     = "word_cache.json"
-_WORD_CACHE_TTL_DAYS = 30
-_WORD_CACHE_MAX      = 500
 
-
-# ── [TURBO PARALLEL-BOOT] Pure fetch functions — no st.* calls, safe for threads
-def _boot_fetch_usage() -> tuple:
-    """Fetch RPD/RPM usage from GitHub. Thread-safe, no Streamlit calls."""
+def _legacy_load_rpd() -> int:
     try:
-        file = repo.get_contents(_COMBINED_USAGE_FILE)
-        _GH_SHA_CACHE[_COMBINED_USAGE_FILE] = file.sha   # seed SHA cache
-        data = _fast_loads(file.decoded_content.decode('utf-8'))
-        rpd  = data.get("rpd_count", 0) if data.get("date") == str(date.today()) else 0
-        tss  = [datetime.fromisoformat(ts) for ts in data.get("timestamps", [])]
-        return rpd, tss
-    except GithubException as e:
-        if e.status == 404:
-            # Try legacy files
-            try:
-                f = repo.get_contents("usage.json")
-                d = _fast_loads(f.decoded_content.decode('utf-8'))
-                rpd = d.get("rpd_count", 0) if d.get("date") == str(date.today()) else 0
-            except:
-                rpd = 0
-            return rpd, []
-        return 0, []
-    except:
-        return 0, []
+        file = repo.get_contents("usage.json")
+        data = json.loads(file.decoded_content.decode('utf-8'))
+        return data.get("rpd_count", 0) if data.get("date") == str(date.today()) else 0
+    except: return 0
 
-def _boot_fetch_word_cache() -> dict:
-    """Fetch word cache from GitHub. Thread-safe, no Streamlit calls."""
+def _legacy_load_rpm() -> list:
     try:
-        file = repo.get_contents(_WORD_CACHE_FILE)
-        _GH_SHA_CACHE[_WORD_CACHE_FILE] = file.sha        # seed SHA cache
-        data = _fast_loads(file.decoded_content.decode('utf-8'))
-        if not isinstance(data, dict): return {}
-        cutoff = datetime.now().timestamp() - (_WORD_CACHE_TTL_DAYS * 86400)
-        pruned = {}
-        for k, v in data.items():
-            if not isinstance(v, dict): continue
-            try:
-                if datetime.fromisoformat(v.get('_cached_at', '')).timestamp() >= cutoff:
-                    pruned[k] = v
-            except:
-                pruned[k] = v
-        return pruned
-    except:
-        return {}
-
-def _boot_fetch_vocab_df() -> pd.DataFrame:
-    """Fetch vocabulary CSV from GitHub. Thread-safe, no Streamlit calls."""
-    try:
-        file_content = repo.get_contents("vocabulary.csv")
-        _GH_SHA_CACHE["vocabulary.csv"] = file_content.sha  # seed SHA cache
-        df = pd.read_csv(io.StringIO(file_content.decoded_content.decode('utf-8')), dtype=str)
-        df['phrase'] = df['phrase'].fillna("")
-        df['status'] = df['status'].fillna('New') if 'status' in df.columns else 'New'
-        df['tags']   = df['tags'].fillna('')      if 'tags'   in df.columns else ''
-        return df.sort_values(by="vocab", ignore_index=True)
-    except GithubException as e:
-        if e.status == 404:
-            return pd.DataFrame(columns=['vocab','phrase','status','tags'])
-        return pd.DataFrame(columns=['vocab','phrase','status','tags'])
-    except:
-        return pd.DataFrame(columns=['vocab','phrase','status','tags'])
-# ── end TURBO PARALLEL-BOOT pure fetchers ────────────────────────────────────
-
+        file = repo.get_contents("usage_minute.json")
+        data = json.loads(file.decoded_content.decode('utf-8'))
+        return [datetime.fromisoformat(ts) for ts in data.get("timestamps", [])]
+    except: return []
 
 def _bg_save_combined(rpd_count: int, timestamps: list):
-    data = _fast_dumps({"date": str(date.today()), "rpd_count": rpd_count,
-                        "timestamps": [ts.isoformat() for ts in timestamps]})
-    _gh_smart_write(_COMBINED_USAGE_FILE, "Update combined usage", data)
+    data = json.dumps({"date": str(date.today()), "rpd_count": rpd_count,
+                       "timestamps": [ts.isoformat() for ts in timestamps]})
+    for attempt in range(3):
+        try:
+            try:
+                file = repo.get_contents(_COMBINED_USAGE_FILE)
+                repo.update_file(file.path, "Update combined usage", data, file.sha)
+                _gh_write_tick(); return
+            except GithubException as e:
+                if e.status == 404:
+                    repo.create_file(_COMBINED_USAGE_FILE, "Init combined usage", data)
+                    _gh_write_tick(); return
+                elif e.status == 409:
+                    time.sleep(1 + attempt); continue
+                raise
+        except Exception as e:
+            if attempt == 2: print(f"Combined usage save error: {e}")
+            time.sleep(1)
 
 def save_combined_usage(rpd_count: int, timestamps: list):
     _get_gh_executor().submit(_bg_save_combined, rpd_count, list(timestamps))
 
 def load_combined_usage() -> tuple:
-    """Cached loader — delegates to _boot_fetch_usage and seeds the cache."""
-    return _boot_fetch_usage()
+    try:
+        file = repo.get_contents(_COMBINED_USAGE_FILE)
+        data = json.loads(file.decoded_content.decode('utf-8'))
+        rpd  = data.get("rpd_count", 0) if data.get("date") == str(date.today()) else 0
+        tss  = [datetime.fromisoformat(ts) for ts in data.get("timestamps", [])]
+        return rpd, tss
+    except GithubException as e:
+        if e.status == 404:
+            rpd, tss = _legacy_load_rpd(), _legacy_load_rpm()
+            save_combined_usage(rpd, tss); return rpd, tss
+        return 0, []
+    except: return 0, []
 
 def _bg_log_safety_block(vocab_words: list, prompt_hash: str):
     entry = {"timestamp": datetime.now().isoformat(), "vocab": vocab_words, "prompt_hash": prompt_hash}
     try:
-        existing = []
+        existing, file_sha = [], None
         try:
-            file = repo.get_contents("safety_log.json")
-            _GH_SHA_CACHE["safety_log.json"] = file.sha
-            existing = _fast_loads(file.decoded_content.decode('utf-8'))
+            file     = repo.get_contents("safety_log.json")
+            file_sha = file.sha
+            existing = json.loads(file.decoded_content.decode('utf-8'))
             if not isinstance(existing, list): existing = []
         except GithubException as e:
             if e.status != 404: return
-        existing.append(entry)
-        existing = existing[-100:]
-        _gh_smart_write("safety_log.json", "Safety block log",
-                        _fast_dumps(existing, indent=2))
+        existing.append(entry); existing = existing[-100:]
+        data = json.dumps(existing, ensure_ascii=False, indent=2)
+        if file_sha: repo.update_file("safety_log.json", "Safety block log", data, file_sha)
+        else:        repo.create_file("safety_log.json", "Init safety log", data)
+        _gh_write_tick()
     except Exception as e: print(f"Safety log write error: {e}")
 
 def log_safety_block(vocab_words: list, prompt: str):
@@ -612,18 +527,19 @@ def _bg_save_export_history(deck_name: str, card_count: int, vocab_list: list):
     entry = {"timestamp": datetime.now().isoformat(), "deck_name": deck_name,
              "card_count": card_count, "vocabs": vocab_list[:50]}
     try:
-        existing = []
+        existing, file_sha = [], None
         try:
-            file = repo.get_contents("export_history.json")
-            _GH_SHA_CACHE["export_history.json"] = file.sha
-            existing = _fast_loads(file.decoded_content.decode('utf-8'))
+            file     = repo.get_contents("export_history.json")
+            file_sha = file.sha
+            existing = json.loads(file.decoded_content.decode('utf-8'))
             if not isinstance(existing, list): existing = []
         except GithubException as e:
             if e.status != 404: return
-        existing.append(entry)
-        existing = existing[-200:]
-        _gh_smart_write("export_history.json", "Export history",
-                        _fast_dumps(existing, indent=2))
+        existing.append(entry); existing = existing[-200:]
+        data = json.dumps(existing, ensure_ascii=False, indent=2)
+        if file_sha: repo.update_file("export_history.json", "Export history", data, file_sha)
+        else:        repo.create_file("export_history.json", "Init export history", data)
+        _gh_write_tick()
     except Exception as e: print(f"Export history write error: {e}")
 
 def save_export_history(deck_name: str, card_count: int, vocab_list: list):
@@ -633,9 +549,13 @@ def save_export_history(deck_name: str, card_count: int, vocab_list: list):
 def load_export_history() -> list:
     try:
         file = repo.get_contents("export_history.json")
-        data = _fast_loads(file.decoded_content.decode('utf-8'))
+        data = json.loads(file.decoded_content.decode('utf-8'))
         return data if isinstance(data, list) else []
     except: return []
+
+_WORD_CACHE_FILE     = "word_cache.json"
+_WORD_CACHE_TTL_DAYS = 30
+_WORD_CACHE_MAX      = 500
 
 def _bg_save_word_cache(word_cache: dict):
     now_str = datetime.now().isoformat()
@@ -646,17 +566,38 @@ def _bg_save_word_cache(word_cache: dict):
         stamped[k] = entry
     if len(stamped) > _WORD_CACHE_MAX:
         stamped = dict(list(stamped.items())[-_WORD_CACHE_MAX:])
-    _gh_smart_write(_WORD_CACHE_FILE, "Update word cache", _fast_dumps(stamped))
+    data = json.dumps(stamped, ensure_ascii=False)
+    try:
+        try:
+            file = repo.get_contents(_WORD_CACHE_FILE)
+            repo.update_file(file.path, "Update word cache", data, file.sha)
+            _gh_write_tick()
+        except GithubException as e:
+            if e.status == 404:
+                repo.create_file(_WORD_CACHE_FILE, "Init word cache", data)
+                _gh_write_tick()
+    except Exception as e: print(f"Word cache save error: {e}")
 
 def save_word_cache(word_cache: dict):
     _get_gh_executor().submit(_bg_save_word_cache, dict(word_cache))
 
 @st.cache_data(ttl=3600)
 def load_word_cache() -> dict:
-    """Cached fallback — used on warm reruns where session_state already has data."""
-    return _boot_fetch_word_cache()
+    try:
+        file = repo.get_contents(_WORD_CACHE_FILE)
+        data = json.loads(file.decoded_content.decode('utf-8'))
+        if not isinstance(data, dict): return {}
+        cutoff = datetime.now().timestamp() - (_WORD_CACHE_TTL_DAYS * 86400)
+        pruned = {}
+        for k, v in data.items():
+            if not isinstance(v, dict): continue
+            try:
+                if datetime.fromisoformat(v.get('_cached_at', '')).timestamp() >= cutoff:
+                    pruned[k] = v
+            except: pruned[k] = v
+        return pruned
+    except: return {}
 
-# ── [TURBO D2] RPM wait as a draining progress bar ───────────────────────────
 def enforce_rpm() -> float:
     t0  = time.perf_counter()
     now = datetime.now()
@@ -664,20 +605,17 @@ def enforce_rpm() -> float:
         ts for ts in st.session_state.rpm_timestamps
         if (now - ts).total_seconds() < 60
     ]
+    save_combined_usage(st.session_state.rpd_count, st.session_state.rpm_timestamps)
     if len(st.session_state.rpm_timestamps) >= 5:
-        WAIT     = 12
-        _pb_slot = st.empty()
-        for r in range(WAIT, 0, -1):
+        _slot = st.empty()
+        for r in range(12, 0, -1):
             frame = _SPIN[r % len(_SPIN)]
-            pct   = (WAIT - r) / WAIT
-            _pb_slot.progress(pct,
-                text=f"{frame} RPM Governor (5/min) — resuming in **{r}s** _(quota governor active)_")
+            _slot.warning(f"{frame} RPM limit (5/min). Resuming in **{r}s**... _(quota governor active)_")
             time.sleep(1)
-        _pb_slot.empty()
-    st.session_state.rpm_timestamps.append(datetime.now())
+        _slot.empty()
+    st.session_state.rpm_timestamps.append(now)
     save_combined_usage(st.session_state.rpd_count, st.session_state.rpm_timestamps)
     return time.perf_counter() - t0
-# ── end TURBO D2 ──────────────────────────────────────────────────────────────
 
 @st.cache_resource
 def get_gemini_model(api_key: str, model_name: str):
@@ -709,10 +647,10 @@ def cap_each_sentence(text: str) -> str:
     if not isinstance(text, str): return text
     return " ".join(cap_first(s) for s in _RE_SENT_SPLIT.split(text) if s.strip())
 
-def highlight_vocab(text: str, vocab: str, compiled_re=None) -> str:
+def highlight_vocab(text: str, vocab: str) -> str:
     if not text or not vocab: return text
-    pat = compiled_re or re.compile(r'\b' + re.escape(vocab) + r'\b', re.IGNORECASE)
-    return pat.sub(f'<b><u>{vocab}</u></b>', text)
+    return re.compile(r'\b' + re.escape(vocab) + r'\b', re.IGNORECASE).sub(
+        f'<b><u>{vocab}</u></b>', text)
 
 def fix_vocab_casing(phrase: str, vocab: str) -> str:
     if not phrase or not vocab: return phrase
@@ -721,11 +659,11 @@ def fix_vocab_casing(phrase: str, vocab: str) -> str:
 def robust_json_parse(text: str):
     text = _RE_JSON_FENCE_S.sub("", text.strip())
     text = _RE_JSON_FENCE_E.sub("", text)
-    try: return _fast_loads(text)
+    try: return json.loads(text)
     except: pass
     m = _RE_JSON_ARRAY.search(text)
     if m:
-        try: return _fast_loads(m.group(0))
+        try: return json.loads(m.group(0))
         except: pass
     return None
 
@@ -798,7 +736,7 @@ def enrich_empty_phrases(vocab_list: list) -> dict:
     capped = vocab_list[:15]
     prompt = (f"Generate ONE natural example sentence (max 15 words) for each vocabulary word below.\n"
               f'Return ONLY a JSON array: [{{"vocab": "word", "phrase": "sentence"}}, ...]\n'
-              f"No commentary.\nWORDS: {_fast_dumps(capped)}")
+              f"No commentary.\nWORDS: {json.dumps(capped)}")
     try:
         response = model.generate_content(prompt)
         st.session_state.rpd_count += 1
@@ -837,28 +775,11 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6, dry_run=Fal
         if use_mnemonic else ""
     )
     difficulty_rule = f"\n10. DIFFICULTY: {diff_str} Tailor all outputs accordingly." if diff_str else ""
-
-    # ── [TURBO A9] Conditional prompt pruning ────────────────────────────────
     is_cjk = TARGET_LANG in ("Japanese", "Chinese (Mandarin)")
-    romanization_rule = (
-        "\n12. 'romanization': Japanese=Romaji, Chinese=Pinyin with tone marks."
-        if is_cjk else ""
-    )
+    romanization_rule = ("\n12. 'romanization': Japanese=Romaji, Chinese=Pinyin with tone marks." if is_cjk else "")
     lang2 = st.session_state.get("target_lang2", "None (disabled)")
-    lang2_rule = (
-        f"\n13. 'translation2': ONLY the {lang2} translation of 'vocab'. NEVER a full sentence."
-        if lang2 != "None (disabled)" else ""
-    )
-    _required_keys = (
-        "vocab, translation, part_of_speech, pronunciation_ipa, pronunciation_guide, "
-        "definition_english, example_sentences, synonyms_antonyms, register"
-    )
-    if not use_lite_mode:  _required_keys += ", etymology, collocations"
-    if use_mnemonic:       _required_keys += ", mnemonic"
-    if is_cjk:             _required_keys += ", romanization"
-    if lang2 != "None (disabled)": _required_keys += ", translation2"
-    # ── end TURBO A9 ─────────────────────────────────────────────────────────
-
+    lang2_rule = (f"\n13. 'translation2': ONLY the {lang2} translation of 'vocab'. NEVER a full sentence."
+                  if lang2 != "None (disabled)" else "")
     length_limits = (
         "\n14. FIELD LENGTH LIMITS: 'definition_english' max 25 words. "
         "Each 'example_sentences' item max 15 words. "
@@ -895,17 +816,6 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6, dry_run=Fal
         progress_bar = st.progress(0)
         _anim_slot   = st.empty()
 
-        # ── [TURBO D1+D6] Live card counter + ETA ────────────────────────────
-        _hud_col1, _hud_col2 = st.columns(2)
-        _cards_slot = _hud_col1.empty()
-        _eta_slot   = _hud_col2.empty()
-        _batch_times: list[float] = []
-        # ── end TURBO D1+D6 ──────────────────────────────────────────────────
-
-        # ── [TURBO C3-STREAM] Live streaming counter slot ────────────────────
-        _stream_slot = st.empty()
-        # ── end TURBO C3-STREAM ───────────────────────────────────────────────
-
         for idx, batch in enumerate(batches):
             _anim_slot.info(
                 f"{_SPIN[idx % len(_SPIN)]} **Batch {idx+1}/{len(batches)}** — "
@@ -926,7 +836,6 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6, dry_run=Fal
                 for vp in batch: st.session_state.failed_words.append(vp[0])
                 break
 
-            t_batch_start = time.perf_counter()
             t_rpm         = enforce_rpm()
             batch_dicts   = [{"vocab": v[0], "phrase": v[1]} for v in batch]
             vocab_words   = [v[0] for v in batch]
@@ -979,9 +888,12 @@ RULES:
 EXAMPLES (varied each batch for diversity):
 {few_shot_json}
 
-BATCH INPUT: {_fast_dumps(batch_dicts)}
+BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}
 
-/* REQUIRED JSON KEYS per item: {_required_keys} */"""
+/* REQUIRED JSON KEYS per item:
+   vocab, translation, part_of_speech, pronunciation_ipa, pronunciation_guide,
+   definition_english, example_sentences, synonyms_antonyms,
+   etymology, collocations, register, mnemonic, romanization, translation2 */"""
 
             log_tpm_chars(len(prompt))
 
@@ -991,71 +903,44 @@ BATCH INPUT: {_fast_dumps(batch_dicts)}
                     st.error(f"🛑 TPM blocked `{', '.join(vocab_words)}`: ~{_proj:,} tokens > {TPM_BLOCK_THRESHOLD:,}.")
                     st.session_state.failed_words.extend(vocab_words)
                     timings.append({"batch": idx+1, "words": ", ".join(vocab_words),
-                                    "rpm_wait_s": round(t_rpm,3), "gemini_s": 0.0,
-                                    "cached": False, "note": "TPM_BLOCKED"})
+                                    "rpm_wait_s": round(t_rpm,3), "gemini_s": 0.0, "cached": False, "note": "TPM_BLOCKED"})
                     progress_bar.progress((idx+1)/len(batches))
                     _anim_slot.empty(); continue
                 elif _proj > TPM_WARN_THRESHOLD:
                     st.warning(f"⚠️ TPM approaching: ~{_proj:,} / 1,000,000.")
 
-            success       = False
-            t_api_start   = time.perf_counter()
-            parsed        = None
+            success     = False
+            t_api_start = time.perf_counter()
 
             if dry_run:
                 st.info(f"🔬 Dry-run: `{', '.join(vocab_words)}`")
-                parsed = [{"vocab": v[0], "phrase": v[1], "translation": "mock-"+v[0],
-                           "part_of_speech": "Noun", "pronunciation_ipa": "/mock/",
-                           "pronunciation_guide": "MOCK",
-                           "definition_english": "Simulated definition for testing.",
-                           "example_sentences": ["Mock example sentence for dry run."],
-                           "synonyms_antonyms": {"synonyms": ["mock","simulated"], "antonyms": []},
-                           "etymology": "Simulated.", "collocations": ["mock one","mock two"],
-                           "register": "Neutral", "mnemonic": "Mock mnemonic.", "romanization": "",
-                           "translation2": "mock-t2" if lang2 != "None (disabled)" else ""}
-                          for v in batch]
-                all_new_data.extend(parsed)
-                for card in parsed: word_cache[card['vocab'].strip().lower()] = card
+                mock = [{"vocab": v[0], "phrase": v[1], "translation": "mock-"+v[0],
+                         "part_of_speech": "Noun", "pronunciation_ipa": "/mock/",
+                         "pronunciation_guide": "MOCK",
+                         "definition_english": "Simulated definition for testing.",
+                         "example_sentences": ["Mock example sentence for dry run."],
+                         "synonyms_antonyms": {"synonyms": ["mock","simulated"], "antonyms": []},
+                         "etymology": "Simulated.", "collocations": ["mock one","mock two"],
+                         "register": "Neutral", "mnemonic": "Mock mnemonic.", "romanization": "",
+                         "translation2": "mock-t2" if lang2 != "None (disabled)" else ""}
+                        for v in batch]
+                all_new_data.extend(mock)
+                for card in mock: word_cache[card['vocab'].strip().lower()] = card
                 success = True
             else:
                 for attempt in range(3):
                     try:
-                        # ── [TURBO C3-STREAM] Stream Gemini response ──────────────────────
-                        _stream_slot.caption(
-                            f"🌊 Streaming batch {idx+1} · 0 chars received...")
-                        full_response_text = ""
-                        finish_reason      = None
-
-                        response_iter = model.generate_content(prompt, stream=True)
-                        for _chunk in response_iter:
-                            try:
-                                if _chunk.text:
-                                    full_response_text += _chunk.text
-                                    _stream_slot.caption(
-                                        f"🌊 Streaming batch {idx+1} · "
-                                        f"**{len(full_response_text):,}** chars received...")
-                            except Exception:
-                                pass
-                            # Check finish reason from the last chunk
-                            try:
-                                if hasattr(_chunk, 'candidates') and _chunk.candidates:
-                                    finish_reason = str(_chunk.candidates[0].finish_reason)
-                            except Exception:
-                                pass
-
-                        _stream_slot.empty()
-                        # ── end TURBO C3-STREAM ───────────────────────────────────────────
-
+                        response = model.generate_content(prompt)
                         st.session_state.rpd_count += 1
                         save_combined_usage(st.session_state.rpd_count, st.session_state.rpm_timestamps)
-
-                        if finish_reason in ("3","SAFETY","FinishReason.SAFETY"):
-                            st.warning(f"🛡️ Safety filter blocked `{', '.join(vocab_words)}`.")
-                            log_safety_block(vocab_words, prompt)
-                            st.session_state.failed_words.extend(vocab_words)
-                            break
-
-                        parsed = robust_json_parse(full_response_text)
+                        if hasattr(response, 'candidates') and response.candidates:
+                            finish = str(response.candidates[0].finish_reason)
+                            if finish in ("3","SAFETY","FinishReason.SAFETY"):
+                                st.warning(f"🛡️ Safety filter blocked `{', '.join(vocab_words)}`.")
+                                log_safety_block(vocab_words, prompt)
+                                st.session_state.failed_words.extend(vocab_words)
+                                break
+                        parsed = robust_json_parse(response.text)
                         if isinstance(parsed, list) and len(parsed) > 0:
                             all_new_data.extend(parsed)
                             for card in parsed: word_cache[card['vocab'].strip().lower()] = card
@@ -1070,22 +955,7 @@ BATCH INPUT: {_fast_dumps(batch_dicts)}
                             st.session_state.generation_checkpoint = list(all_new_data)
                             st.session_state.checkpoint_name       = ckpt_name
                             success = True; break
-                        else:
-                            # Stream returned empty/unparseable — try non-streaming fallback once
-                            if attempt == 2:
-                                _stream_slot.empty()
-                                st.warning(f"⚠️ Stream parse failed for batch {idx+1}, trying direct call...")
-                                fallback_resp = model.generate_content(prompt)
-                                st.session_state.rpd_count += 1
-                                save_combined_usage(st.session_state.rpd_count, st.session_state.rpm_timestamps)
-                                parsed = robust_json_parse(fallback_resp.text)
-                                if isinstance(parsed, list) and len(parsed) > 0:
-                                    all_new_data.extend(parsed)
-                                    for card in parsed: word_cache[card['vocab'].strip().lower()] = card
-                                    success = True
-                                break
                     except Exception as e:
-                        _stream_slot.empty()
                         if "429" in str(e):
                             backoff = 20 + (2 ** attempt) + random.uniform(0, 1)
                             _slot = st.empty()
@@ -1098,31 +968,15 @@ BATCH INPUT: {_fast_dumps(batch_dicts)}
                             time.sleep(2)
 
             t_api_elapsed = time.perf_counter() - t_api_start
-
-            # ── [TURBO D1+D6] Update live counter and ETA ─────────────────────
-            _batch_times.append(time.perf_counter() - t_batch_start)
-            _total_ready = len(all_new_data) + len(cached_results)
-            _avg_bt      = sum(_batch_times) / len(_batch_times)
-            _remaining_b = len(batches) - (idx + 1)
-            _eta_s       = _avg_bt * _remaining_b
-            _eta_str     = (f"~{int(_eta_s//60)}m {int(_eta_s%60)}s" if _eta_s > 60
-                            else f"~{int(_eta_s)}s" if _eta_s > 1 else "✅ done")
-            _batch_delta = len(parsed) if (success and isinstance(parsed, list)) else 0
-            _cards_slot.metric("✅ Cards Ready", _total_ready,
-                               delta=_batch_delta if _batch_delta else None)
-            _eta_slot.metric("⏱️ ETA", _eta_str if _remaining_b > 0 else "✅ done")
-            # ── end TURBO D1+D6 ───────────────────────────────────────────────
-
             timings.append({"batch": idx+1, "words": ", ".join(vocab_words),
                             "rpm_wait_s": round(t_rpm,3), "gemini_s": round(t_api_elapsed,3),
-                            "cached": False, "note": "streamed" if not dry_run else "dry_run"})
+                            "cached": False, "note": ""})
             if not success and not dry_run:
                 st.error(f"❌ **Failed**: `{', '.join(vocab_words)}` — queued for retry")
                 st.session_state.failed_words.extend(vocab_words)
             progress_bar.progress((idx+1)/len(batches))
 
         _anim_slot.empty()
-        _stream_slot.empty()
         total = len(all_new_data) + len(cached_results)
         status_log.update(label=f"✅ AI Complete! ({total} items | {len(cached_results)} cached)",
                           state="complete", expanded=False)
@@ -1138,17 +992,9 @@ BATCH INPUT: {_fast_dumps(batch_dicts)}
     return cached_results + all_new_data
 
 
-# ── [TURBO C6] Fast vocab fingerprint — replaces slow pd.util.hash_pandas_object
-def _fast_df_key(df: pd.DataFrame) -> str:
-    vocabs = sorted(df['vocab'].astype(str).tolist())
-    sample = vocabs[:8] + vocabs[-4:]
-    return hashlib.sha256('|'.join(sample).encode()).hexdigest()[:16]
-# ── end TURBO C6 ──────────────────────────────────────────────────────────────
-
-
 def process_anki_data(df_subset, batch_size=6, dry_run=False):
     t0        = time.perf_counter()
-    cache_key = _fast_df_key(df_subset)
+    cache_key = str(pd.util.hash_pandas_object(df_subset).sum())
     cached    = st.session_state.get("processed_cache", {})
     if (cached.get("key") == cache_key
             and (datetime.now() - cached.get("time", datetime.min)).total_seconds() < 300):
@@ -1180,26 +1026,19 @@ def process_anki_data(df_subset, batch_size=6, dry_run=False):
         if missing_img:
             with st.spinner(f"🖼️ Fetching {len(missing_img)} image(s) from Unsplash…"):
                 fetch_args = [(v, UNSPLASH_ACCESS_KEY) for v in missing_img]
-                with concurrent.futures.ThreadPoolExecutor(max_workers=10) as exc:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as exc:
                     fetched_urls = list(exc.map(fetch_unsplash_url, fetch_args))
             for v, url in zip(missing_img, fetched_urls):
                 if url:
                     img_url_lookup[v] = url
-                    if v in wc: wc[v]["_unsplash_url"] = url
+                    if v in wc:
+                        wc[v]["_unsplash_url"] = url
             st.session_state.word_cache = wc
             save_word_cache(wc)
             st.caption(f"🖼️ Fetched {len([u for u in fetched_urls if u])} / {len(missing_img)} images from Unsplash")
 
     cloze_sentence  = st.session_state.get("cloze_sentence_mode", False)
     processed_notes = []
-
-    # ── [TURBO C4] Pre-compile per-vocab highlight regex before the note loop ─
-    _hl_re_cache: dict[str, re.Pattern] = {}
-    for card_data in all_card_data:
-        v = str(card_data.get("vocab", "")).strip().lower()
-        if v and v not in _hl_re_cache:
-            _hl_re_cache[v] = re.compile(r'\b' + re.escape(v) + r'\b', re.IGNORECASE)
-    # ── end TURBO C4 ──────────────────────────────────────────────────────────
 
     for card_data in all_card_data:
         required = ["vocab","translation","part_of_speech"]
@@ -1210,7 +1049,7 @@ def process_anki_data(df_subset, batch_size=6, dry_run=False):
 
         vocab_cap        = cap_first(vocab_raw)
         phrase           = fix_vocab_casing(_clean_field(card_data.get("phrase","")), vocab_raw)
-        formatted        = highlight_vocab(phrase, vocab_raw, _hl_re_cache.get(vocab_raw)) if phrase else ""
+        formatted        = highlight_vocab(phrase, vocab_raw) if phrase else ""
         translation      = _clean_field(card_data.get("translation","?"))
         pos              = str(card_data.get("part_of_speech","")).title()
         ipa              = card_data.get("pronunciation_ipa","")
@@ -1248,8 +1087,8 @@ def process_anki_data(df_subset, batch_size=6, dry_run=False):
 
         if cloze_sentence and examples:
             first_plain = _RE_STRIP_HTML.sub('', examples[0]).strip()
-            _cloze_pat  = _hl_re_cache.get(vocab_raw)
-            if _cloze_pat and _cloze_pat.search(first_plain):
+            _cloze_pat  = re.compile(r'\b' + re.escape(vocab_raw) + r'\b', re.IGNORECASE)
+            if _cloze_pat.search(first_plain):
                 text_field = _cloze_pat.sub(f'{{{{c1::{vocab_cap}}}}}', first_plain, count=1)
             else:
                 text_field = (f"{formatted}<br><br>{vocab_cap}: <b>{{{{c1::{translation}}}}}</b>"
@@ -1388,14 +1227,14 @@ def create_anki_package(notes_data, deck_name, generate_audio=True, deck_id=2059
         if generate_audio:
             t_audio       = time.perf_counter()
             unique_vocabs = {n['VocabRaw'] for n in notes_data if n['VocabRaw']}
-            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as exc:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as exc:
                 for vk, fn, fp in exc.map(generate_audio_file, [(v, temp_dir) for v in unique_vocabs]):
                     if fn: media_files.append(fp); audio_map[vk] = f"[sound:{fn}]"
             st.caption(f"⏱️ Audio: {time.perf_counter()-t_audio:.2f}s for {len(unique_vocabs)} words")
 
             if slow_audio:
                 t_slow = time.perf_counter()
-                with concurrent.futures.ThreadPoolExecutor(max_workers=10) as exc:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as exc:
                     for vk, fn, fp in exc.map(generate_slow_audio_file, [(v, temp_dir) for v in unique_vocabs]):
                         if fn: media_files.append(fp); slow_audio_map[vk] = f"[sound:{fn}]"
                 st.caption(f"⏱️ Slow audio: {time.perf_counter()-t_slow:.2f}s for {len(slow_audio_map)} words")
@@ -1407,7 +1246,7 @@ def create_anki_package(notes_data, deck_name, generate_audio=True, deck_id=2059
                     plain_sent = _RE_STRIP_HTML.sub(' ', n.get('Examples','') or '').strip()
                     first_sent = plain_sent.split('  ')[0].strip() if plain_sent else ''
                     if first_sent: sent_args.append((n['VocabRaw'], first_sent, temp_dir))
-                with concurrent.futures.ThreadPoolExecutor(max_workers=10) as exc:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as exc:
                     for vk, fn, fp in exc.map(generate_sentence_audio_file, sent_args):
                         if fn: media_files.append(fp); sent_audio_map[vk] = f"[sound:{fn}]"
                 st.caption(f"⏱️ Sentence audio: {time.perf_counter()-t_sent:.2f}s for {len(sent_audio_map)} sentences")
@@ -1483,8 +1322,17 @@ def create_anki_package(notes_data, deck_name, generate_audio=True, deck_id=2059
 
 @st.cache_data(ttl=600)
 def load_data() -> pd.DataFrame:
-    """Cached fallback — used on warm reruns. Cold boot uses _boot_fetch_vocab_df."""
-    return _boot_fetch_vocab_df()
+    try:
+        file_content = repo.get_contents("vocabulary.csv")
+        df = pd.read_csv(io.StringIO(file_content.decoded_content.decode('utf-8')), dtype=str)
+        df['phrase'] = df['phrase'].fillna("")
+        df['status'] = df['status'].fillna('New') if 'status' in df.columns else 'New'
+        df['tags']   = df['tags'].fillna('')      if 'tags'   in df.columns else ''
+        return df.sort_values(by="vocab", ignore_index=True)
+    except GithubException as e:
+        if e.status == 404: return pd.DataFrame(columns=['vocab','phrase','status','tags'])
+        st.stop()
+    except: st.stop()
 
 def save_to_github(dataframe: pd.DataFrame) -> bool:
     st.session_state.undo_df = st.session_state.vocab_df.copy()
@@ -1498,40 +1346,28 @@ def save_to_github(dataframe: pd.DataFrame) -> bool:
     csv_bytes = len(csv_data.encode('utf-8'))
     if csv_bytes > 500_000:
         st.warning(f"⚠️ vocabulary.csv is **{csv_bytes/1024:.0f} KB** — approaching GitHub limits.")
-    _gh_smart_write("vocabulary.csv", "Updated vocab", csv_data)
+    try:
+        file = repo.get_contents("vocabulary.csv")
+        repo.update_file(file.path, "Updated vocab", csv_data, file.sha)
+        _gh_write_tick()
+    except GithubException as e:
+        if e.status == 404:
+            repo.create_file("vocabulary.csv", "Initial commit", csv_data)
+            _gh_write_tick()
     load_data.clear()
     st.caption(f"⏱️ GitHub save: {time.perf_counter()-t0:.2f}s ({csv_bytes/1024:.0f} KB)")
     return True
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# [TURBO PARALLEL-BOOT] Cold start: fire all 3 GitHub reads simultaneously
-# On a warm rerun session_state is already populated — no GitHub calls made.
-# ══════════════════════════════════════════════════════════════════════════════
-_BOOT_T_GH2        = time.perf_counter()
-_do_parallel_boot  = "rpd_count" not in st.session_state
-
-if _do_parallel_boot:
-    # 3 GitHub reads in parallel — typically cuts cold boot from ~6s → ~3s
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3,
-                                               thread_name_prefix="boot") as _boot_pool:
-        _fu = _boot_pool.submit(_boot_fetch_usage)
-        _fw = _boot_pool.submit(_boot_fetch_word_cache)
-        _fd = _boot_pool.submit(_boot_fetch_vocab_df)
-    _init_rpd, _init_rpm  = _fu.result()
-    _boot_word_cache       = _fw.result()
-    _boot_vocab_df         = _fd.result()
+_BOOT_T_GH2 = time.perf_counter()
+if "rpd_count" not in st.session_state or "rpm_timestamps" not in st.session_state:
+    _init_rpd, _init_rpm = load_combined_usage()
 else:
-    _init_rpd        = st.session_state.rpd_count
-    _init_rpm        = st.session_state.rpm_timestamps
-    _boot_word_cache = st.session_state.get("word_cache", {})
-    _boot_vocab_df   = st.session_state.get("vocab_df", pd.DataFrame(columns=['vocab','phrase','status','tags']))
-
+    _init_rpd = st.session_state.rpd_count
+    _init_rpm = st.session_state.rpm_timestamps
 _BOOT_T_USAGE_DONE = time.perf_counter()
-# ══════════════════════════════════════════════════════════════════════════════
 
 st.session_state.setdefault("gemini_key",              DEFAULT_GEMINI_KEY)
-st.session_state.setdefault("vocab_df",                _boot_vocab_df.copy())
+st.session_state.setdefault("vocab_df",                load_data().copy())
 st.session_state.setdefault("rpd_count",               _init_rpd)
 st.session_state.setdefault("rpm_timestamps",          _init_rpm)
 st.session_state.setdefault("deck_id",                 2059400110)
@@ -1543,7 +1379,8 @@ st.session_state.setdefault("reversed_model_id",       (1607392319+7919)%(1<<31)
 st.session_state.setdefault("include_antonyms",        True)
 st.session_state.setdefault("dry_run",                 False)
 st.session_state.setdefault("processed_cache",         {})
-st.session_state.setdefault("word_cache",              _boot_word_cache)
+_init_word_cache = load_word_cache() if "word_cache" not in st.session_state else st.session_state.word_cache
+st.session_state.setdefault("word_cache",              _init_word_cache)
 st.session_state.setdefault("input_phrase",            "")
 st.session_state.setdefault("input_vocab",             "")
 st.session_state.setdefault("_quota_cache_key",        None)
@@ -1584,8 +1421,8 @@ st.session_state.setdefault("session_budget",          10)
 st.session_state.setdefault("cloze_sentence_mode",     False)
 st.session_state.setdefault("editing_cloze_sentence",  False)
 st.session_state.setdefault("use_images",              False)
-st.session_state.setdefault("back_section_order",      list(BACK_SECTIONS_DEFAULT))
 
+st.session_state.setdefault("back_section_order", list(BACK_SECTIONS_DEFAULT))
 _bso     = st.session_state.back_section_order
 _missing = [s for s in BACK_SECTIONS_DEFAULT if s not in _bso]
 if _missing:
@@ -1605,14 +1442,8 @@ if not st.session_state.get("_boot_profiled", False):
     st.session_state["_boot_profiled"] = True
     _t_total = time.perf_counter() - _BOOT_T0
     _t_gh    = _BOOT_T_GH_DONE - _BOOT_T_GH_START
-    _t_data  = _BOOT_T_USAGE_DONE - _BOOT_T_GH2
-    _orjson_badge = "⚡ orjson" if _HAS_ORJSON else "📦 stdlib json"
-    _boot_mode    = "🚀 parallel" if _do_parallel_boot else "♻️ warm"
-    st.toast(
-        f"⚡ Boot: **{_t_total:.1f}s** "
-        f"(GH auth {_t_gh:.1f}s · data {_t_data:.1f}s [{_boot_mode}] · {_orjson_badge})",
-        icon="⏱️"
-    )
+    _t_usage = _BOOT_T_USAGE_DONE - _BOOT_T_GH2
+    st.toast(f"⚡ Cold boot: **{_t_total:.1f}s** (GH {_t_gh:.1f}s · usage {_t_usage:.1f}s)", icon="⏱️")
 
 
 def mark_as_done_callback():
@@ -1644,12 +1475,11 @@ def save_single_word_callback():
         else:
             new_row = pd.DataFrame([{"vocab": v, "phrase": p, "status": "New", "tags": ""}])
             st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, new_row], ignore_index=True)
-        # [TURBO D5] Optimistic toast fires before GitHub confirms
-        st.toast(f"✅ Saved '{v}'!", icon="🚀")
         save_to_github(st.session_state.vocab_df)
         st.session_state.input_phrase        = ""
         st.session_state.input_vocab         = ""
         st.session_state.session_words_added += 1
+        st.toast(f"✅ Saved '{v}'!", icon="🚀")
     else:
         st.error("⚠️ Enter a vocabulary word.")
 
@@ -1661,11 +1491,10 @@ def quick_add_callback():
             st.toast(f"⚠️ '{v}' already exists.", icon="⚠️"); return
         new_row = pd.DataFrame([{"vocab": v, "phrase": "", "status": "New", "tags": ""}])
         st.session_state.vocab_df = pd.concat([st.session_state.vocab_df, new_row], ignore_index=True)
-        # [TURBO D5] Optimistic toast
-        st.toast(f"✅ Quick-added '{v}'!", icon="⚡")
         save_to_github(st.session_state.vocab_df)
         st.session_state.quick_add_vocab      = ""
         st.session_state.session_words_added += 1
+        st.toast(f"✅ Quick-added '{v}'!", icon="⚡")
         st.session_state.pop("_edit_buf_key", None)
         st.session_state.pop("_edit_buffer",  None)
     else:
@@ -1731,12 +1560,6 @@ with st.sidebar:
     tpm_icon     = "🟢" if tpm_frac < 0.60 else ("🟡" if tpm_frac < 0.85 else "🔴")
     st.progress(tpm_frac, text=f"TPM est: {tpm_icon} {tpm_estimate:,} / 1,000,000 (last 60s)")
     st.caption(f"⏰ Quota resets in **{quota_reset_countdown()}** (UTC midnight)")
-    _speed_badges = []
-    if _HAS_ORJSON:    _speed_badges.append("⚡ orjson")
-    _speed_badges.append("🔑 SHA cache")
-    _speed_badges.append("🚀 parallel boot")
-    _speed_badges.append("🌊 streaming")
-    st.caption(" · ".join(_speed_badges))
     st.divider()
 
     st.selectbox("🎯 Definition Language",
@@ -1808,7 +1631,7 @@ with st.sidebar:
     if st.session_state.model_id_confirm:
         st.warning("⚠️ Changing Model ID may orphan existing Anki cards. **Click again to confirm.**")
     st.caption(f"Current Model ID: {st.session_state.model_id}")
-    st.caption("ℹ️ v3.3 — parallel boot, streaming AI, SHA cache. Regenerate if you have existing cards.")
+    st.caption("ℹ️ v3.1 adds POSBadge + Image fields. Regenerate Model ID if you have existing cards.")
 
     if st.button("🗑️ Clear Word Cache"):
         st.session_state.word_cache            = {}
@@ -1980,11 +1803,11 @@ with tab2:
             display_df = display_df[display_df['vocab'].str.contains(search, case=False, na=False)]
 
         sort_mode = st.session_state.get("sort_mode", "A→Z")
-        if   sort_mode == "A→Z":       display_df = display_df.sort_values("vocab",  ascending=True)
-        elif sort_mode == "Z→A":       display_df = display_df.sort_values("vocab",  ascending=False)
-        elif sort_mode == "New first":  display_df = display_df.sort_values("status", ascending=True)
-        elif sort_mode == "Done first": display_df = display_df.sort_values("status", ascending=False)
-        elif sort_mode == "No phrase":  display_df = display_df[display_df['phrase'].astype(str).str.strip() == '']
+        if   sort_mode == "A→Z":      display_df = display_df.sort_values("vocab",  ascending=True)
+        elif sort_mode == "Z→A":      display_df = display_df.sort_values("vocab",  ascending=False)
+        elif sort_mode == "New first": display_df = display_df.sort_values("status", ascending=True)
+        elif sort_mode == "Done first":display_df = display_df.sort_values("status", ascending=False)
+        elif sort_mode == "No phrase": display_df = display_df[display_df['phrase'].astype(str).str.strip() == '']
 
         page_size = 50
         page      = st.number_input("Page", min_value=1, value=1, step=1)
@@ -2280,7 +2103,6 @@ with tab3:
                 st.caption(f"🔠 Showing **{len(subset)}** word(s) matching: {', '.join(_pos_filter)}")
 
         if st.session_state.failed_words:
-            st.session_state.failed_words = list(dict.fromkeys(st.session_state.failed_words))
             with st.expander(f"⚠️ {len(st.session_state.failed_words)} word(s) failed — click to retry", expanded=True):
                 st.dataframe(pd.DataFrame({"Queued for Retry": st.session_state.failed_words}), hide_index=True)
                 retry_delay = st.select_slider("⏳ Wait before retry", options=[0,30,60,120],
