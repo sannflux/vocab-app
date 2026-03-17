@@ -2431,6 +2431,7 @@ with tab3:
             if st.button("🚀 Generate Deck", type="primary", use_container_width=True):
                 st.session_state.failed_words = []
                 raw_notes = []
+                _should_rerun = False
                 try:
                     raw_notes = process_anki_data(final_export, batch_size=batch_size,
                                                   dry_run=st.session_state.dry_run)
@@ -2442,7 +2443,9 @@ with tab3:
                         st.session_state.editing_sentence_audio = include_sentence_audio
                         st.session_state.editing_slow_audio     = include_slow_audio
                         st.session_state.editing_images         = include_images
-                        st.rerun(scope="app")
+                        _should_rerun = True
+                    else:
+                        st.error("❌ No cards were generated. Check your API quota or retry.")
                 except Exception as e:
                     st.error(f"❌ Generation error: {e} — Status rolled back to 'New'.")
                     if raw_notes:
@@ -2450,6 +2453,10 @@ with tab3:
                         st.session_state.vocab_df.loc[
                             st.session_state.vocab_df['vocab'].isin(failed), 'status'] = 'New'
                         save_to_github(st.session_state.vocab_df)
+                # st.rerun MUST be outside try/except — it raises an internal Streamlit
+                # exception that would otherwise be caught and swallowed by the except block
+                if _should_rerun:
+                    st.rerun(scope="app")
 
         st.divider()
         with st.expander("📊 Session Summary", expanded=False):
