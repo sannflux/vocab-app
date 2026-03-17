@@ -53,7 +53,21 @@ div[data-testid="stMarkdownContainer"] li { color: #1a3a1a !important; }
 
 _BOOT_T0 = time.perf_counter()
 
-st.markdown("""
+# Hide the iframe container that st.components.v1.html creates — fixes white box on mobile
+# We MUST keep components.v1.html because st.markdown strips <script> tags entirely
+st.markdown("""<style>
+div[data-testid="stCustomComponentV1"] {
+    height: 0 !important;
+    min-height: 0 !important;
+    max-height: 0 !important;
+    overflow: hidden !important;
+    position: absolute !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+</style>""", unsafe_allow_html=True)
+
+st.components.v1.html("""
 <script>
 const doc = window.parent.document;
 doc.addEventListener('keydown', function(e) {
@@ -62,7 +76,7 @@ doc.addEventListener('keydown', function(e) {
     }
 }, true);
 </script>
-""", unsafe_allow_html=True)
+""", height=0)
 
 try:
     token              = st.secrets["GITHUB_TOKEN"]
