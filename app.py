@@ -294,11 +294,17 @@ def detect_vocab_gaps(word_cache: dict) -> list:
     return clusters
 
 def fetch_unsplash_url(args) -> str:
-    vocab, access_key = args
+    vocab, access_key, *_ctx = args
+    context = _ctx[0] if _ctx else ""
     if not access_key or not vocab:
         return ""
     try:
-        query = str(vocab).strip().split()[0]
+        base  = str(vocab).strip().split()[0]
+        if context:
+            ctx_words = _RE_STRIP_HTML.sub('', str(context)).split()[:4]
+            query = base + " " + " ".join(ctx_words)
+        else:
+            query = base
         resp  = requests.get(
             "https://api.unsplash.com/search/photos",
             params={"query": query, "per_page": 3, "orientation": "squarish", "content_filter": "high"},
@@ -1024,8 +1030,12 @@ def process_anki_data(df_subset, batch_size=6, dry_run=False):
                 img_url_lookup[v] = cached_url
         missing_img = [v for v in all_vocabs if v not in img_url_lookup]
         if missing_img:
+            def_map = {
+                c.get("vocab","").strip().lower(): c.get("definition_english","")
+                for c in all_card_data if c.get("vocab")
+            }
             with st.spinner(f"🖼️ Fetching {len(missing_img)} image(s) from Unsplash…"):
-                fetch_args = [(v, UNSPLASH_ACCESS_KEY) for v in missing_img]
+                fetch_args = [(v, UNSPLASH_ACCESS_KEY, def_map.get(v,"")) for v in missing_img]
                 with concurrent.futures.ThreadPoolExecutor(max_workers=5) as exc:
                     fetched_urls = list(exc.map(fetch_unsplash_url, fetch_args))
             for v, url in zip(missing_img, fetched_urls):
