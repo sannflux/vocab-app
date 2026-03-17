@@ -53,7 +53,7 @@ div[data-testid="stMarkdownContainer"] li { color: #1a3a1a !important; }
 
 _BOOT_T0 = time.perf_counter()
 
-st.components.v1.html("""
+st.markdown("""
 <script>
 const doc = window.parent.document;
 doc.addEventListener('keydown', function(e) {
@@ -62,7 +62,7 @@ doc.addEventListener('keydown', function(e) {
     }
 }, true);
 </script>
-""", height=0)
+""", unsafe_allow_html=True)
 
 try:
     token              = st.secrets["GITHUB_TOKEN"]
