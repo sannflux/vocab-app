@@ -1116,6 +1116,7 @@ def process_anki_data(df_subset, batch_size=6, dry_run=False):
             "Hint":             hint,
             "Tags":             list(tags_lookup.get(vocab_raw, [])),
             "POSBadge":         pos_badge_html,
+            "Image":            img_url_lookup.get(vocab_raw, ""),
             "_unsplash_url":    img_url_lookup.get(vocab_raw, ""),
         }
         q_score = score_card(note)
@@ -1221,7 +1222,7 @@ def create_anki_package(notes_data, deck_name, generate_audio=True, deck_id=2059
     media_files = []
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        audio_map, slow_audio_map, sent_audio_map, image_map = {}, {}, {}, {}
+        audio_map, slow_audio_map, sent_audio_map = {}, {}, {}
 
         if generate_audio:
             t_audio       = time.perf_counter()
@@ -1250,30 +1251,9 @@ def create_anki_package(notes_data, deck_name, generate_audio=True, deck_id=2059
                         if fn: media_files.append(fp); sent_audio_map[vk] = f"[sound:{fn}]"
                 st.caption(f"⏱️ Sentence audio: {time.perf_counter()-t_sent:.2f}s for {len(sent_audio_map)} sentences")
 
-        if generate_images:
-            t_img       = time.perf_counter()
-            needs_refetch = [(n['VocabRaw'], n) for n in notes_data
-                             if not n.get('_unsplash_url','') and UNSPLASH_ACCESS_KEY]
-            if needs_refetch:
-                st.caption(f"🔄 Re-fetching {len(needs_refetch)} missing Unsplash URL(s)…")
-                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as exc:
-                    refetched = list(exc.map(fetch_unsplash_url,
-                                             [(vk, UNSPLASH_ACCESS_KEY) for vk, _ in needs_refetch]))
-                for (vk, note), url in zip(needs_refetch, refetched):
-                    if url:
-                        note['_unsplash_url'] = url
-            img_args    = [(n['VocabRaw'], n.get('_unsplash_url',''), temp_dir) for n in notes_data]
-            failed_imgs = []
-            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as exc:
-                for vk, fn, fp in exc.map(download_image_file, img_args):
-                    if fn:
-                        media_files.append(fp)
-                        image_map[vk] = fn
-                    else:
-                        failed_imgs.append(vk)
-            st.caption(f"⏱️ Images: {time.perf_counter()-t_img:.2f}s · {len(image_map)} downloaded · {len(failed_imgs)} failed")
-            if failed_imgs:
-                st.warning(f"⚠️ Image download failed for: `{', '.join(failed_imgs)}` — cards will show no image (not broken icon).")
+        imgs_with_url = sum(1 for n in notes_data if n.get('Image',''))
+        if imgs_with_url:
+            st.caption(f"🖼️ {imgs_with_url} card(s) will load images via HTTPS from Unsplash.")
 
         all_fields_check = ['Definition','Examples','Collocations','Synonyms',
                             'Antonyms','Mnemonic','Romanization','Translation2','Hint']
@@ -1284,7 +1264,7 @@ def create_anki_package(notes_data, deck_name, generate_audio=True, deck_id=2059
             "avg_quality":      avg_quality,
             "field_completion": {f: sum(1 for n in notes_data if str(n.get(f,'')).strip())
                                  for f in all_fields_check},
-            "images_embedded":  len(image_map),
+            "images_with_url":  imgs_with_url,
         }
 
         exported_hashes = st.session_state.get("exported_hashes", set())
@@ -1311,7 +1291,7 @@ def create_anki_package(notes_data, deck_name, generate_audio=True, deck_id=2059
                     audio_map.get(note_data['VocabRaw'],'') + sent_audio_map.get(note_data['VocabRaw'],''),
                     slow_audio_map.get(note_data['VocabRaw'],''),
                     note_data.get('POSBadge',''),
-                    image_map.get(note_data['VocabRaw'],''),
+                    note_data.get('Image',''),
                 ],
                 tags=note_data['Tags'], guid=vocab_hash
             ))
@@ -2039,8 +2019,8 @@ with tab3:
                 tc = ds.get("total_cards", 1)
                 sc3.metric("With Examples",  f"{fc.get('Examples',0)}/{tc}")
                 sc4.metric("With Mnemonics", f"{fc.get('Mnemonic',0)}/{tc}")
-                if ds.get("images_embedded", 0) > 0:
-                    st.caption(f"🖼️ {ds['images_embedded']} image(s) embedded from Unsplash.")
+                if ds.get("images_with_url", 0) > 0:
+                    st.caption(f"🖼️ {ds['images_with_url']} card(s) have images loading via HTTPS.")
             if st.session_state.get("preview_notes"):
                 show_styled = st.toggle("🃏 Show Anki-style render", value=False)
                 with st.expander("👁️ Card Preview (first 3 cards)", expanded=True):
