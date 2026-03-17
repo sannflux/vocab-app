@@ -5,4 +5,3 @@ pandas>=2.0.0
 genanki>=0.13.0
 gTTS>=2.5.0
 requests>=2.31.0
-orjson
