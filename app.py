@@ -308,7 +308,10 @@ def fetch_unsplash_url(args) -> str:
         if resp.status_code == 200:
             results = resp.json().get("results", [])
             if results:
-                return results[0]["urls"]["small"]
+                raw_url = results[0]["urls"]["small"]
+                if "?" in raw_url:
+                    return raw_url + "&fm=jpg&q=80"
+                return raw_url + "?fm=jpg&q=80"
         elif resp.status_code == 403:
             print(f"Unsplash 403 for '{vocab}': invalid key or rate-limited.")
     except Exception as exc:
@@ -325,13 +328,8 @@ def download_image_file(args) -> tuple:
             headers={"User-Agent": "Mozilla/5.0 (compatible; VocabApp/3.1)"},
         )
         if resp.status_code == 200:
-            content_type = resp.headers.get("Content-Type", "image/jpeg").lower()
-            if   "webp" in content_type: ext = ".webp"
-            elif "png"  in content_type: ext = ".png"
-            elif "gif"  in content_type: ext = ".gif"
-            else:                        ext = ".jpg"
             clean_base  = _RE_CLEAN_FNAME.sub("", vocab_raw)
-            clean_fname = f"img_{clean_base}{ext}"
+            clean_fname = f"img_{clean_base}.jpg"
             file_path   = os.path.join(temp_dir, clean_fname)
             with open(file_path, "wb") as f:
                 for chunk in resp.iter_content(8192):
