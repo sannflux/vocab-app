@@ -320,13 +320,25 @@ def download_image_file(args) -> tuple:
     if not image_url:
         return vocab_raw, None, None
     try:
-        resp = requests.get(image_url, timeout=10, stream=True)
+        resp = requests.get(
+            image_url, timeout=10, stream=True,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; VocabApp/3.1)"},
+        )
         if resp.status_code == 200:
-            clean_fname = "img_" + _RE_CLEAN_FNAME.sub("", vocab_raw) + ".jpg"
+            content_type = resp.headers.get("Content-Type", "image/jpeg").lower()
+            if   "webp" in content_type: ext = ".webp"
+            elif "png"  in content_type: ext = ".png"
+            elif "gif"  in content_type: ext = ".gif"
+            else:                        ext = ".jpg"
+            clean_base  = _RE_CLEAN_FNAME.sub("", vocab_raw)
+            clean_fname = f"img_{clean_base}{ext}"
             file_path   = os.path.join(temp_dir, clean_fname)
             with open(file_path, "wb") as f:
                 for chunk in resp.iter_content(8192):
                     f.write(chunk)
+            if os.path.getsize(file_path) < 500:
+                print(f"Image too small for '{vocab_raw}' — likely an error page.")
+                return vocab_raw, None, None
             return vocab_raw, clean_fname, file_path
     except Exception as exc:
         print(f"Image download error for '{vocab_raw}': {exc}")
