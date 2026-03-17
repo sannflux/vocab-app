@@ -2315,11 +2315,12 @@ with tab3:
                        f"({math.ceil(_n_words/_recommended)} request(s) needed).")
         else:
             st.caption(f"⚙️ Custom: **{raw_batch}** (recommended was {_recommended}).")
-        max_safe   = max(1, math.ceil(_n_words/max(1,requests_left))) if requests_left > 0 else 1
-        batch_size = min(raw_batch, max_safe)
+        batch_size = raw_batch  # user's choice — quota guard below handles over-limit
         st.session_state.last_batch_size = batch_size
-        if batch_size != raw_batch:
-            st.caption(f"⚠️ Capped to **{batch_size}** by quota limit.")
+        # Warn only when this batch would genuinely exhaust all remaining requests
+        requests_needed = math.ceil(_n_words / batch_size) if batch_size > 0 else _n_words
+        if requests_needed > requests_left > 0:
+            st.caption(f"⚠️ {requests_needed} request(s) needed but only {requests_left} left today.")
 
         # v3.2: Card options — 2-column grid, mobile-friendly, saved to session state
         st.markdown("**⚙️ Card Options**")
