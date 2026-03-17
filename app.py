@@ -33,6 +33,7 @@ TEXT_COLOR  = "#aaffaa"
 _SPIN = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"]
 
 CHANGELOG = [
+    ("v3.2", "💾 Settings persistence · 🖼️ Smart image fix (AI query + validator) · 📱 Mobile generate · 🗂️ Collapsible sidebar · 🔎 Larger card images"),
     ("v3.1", "🖼️ Unsplash images · 🎨 POS badges · 🗣️ Pron guide · 🧠 4× smarter prompts"),
     ("v3.0", "🌸 Pastel theme · 📱 Mobile ↑↓ section reorder · 🐢 Slow audio"),
     ("v2.9", "💭 Hint field · 🎴 Cloze sentence mode · 🏷️ needs_review auto-tag"),
@@ -210,14 +211,14 @@ def build_back_html(section_order: list, include_antonyms: bool) -> str:
     return html
 
 _FEW_SHOT_POOL = [
-    {"vocab":"serendipity","phrase":"We found the perfect cafe by pure serendipity.","translation":"kebetulan","part_of_speech":"Noun","pronunciation_ipa":"/ˌsɛrənˈdɪpɪti/","pronunciation_guide":"SEHR-en-DIP-ih-tee","definition_english":"The occurrence of events by chance in a happy way.","example_sentences":["It was pure serendipity that we met."],"synonyms_antonyms":{"synonyms":["chance","luck"],"antonyms":[]},"etymology":"Coined by Horace Walpole in 1754.","collocations":["by pure serendipity","happy serendipity","moment of serendipity"],"register":"Neutral","mnemonic":"SERENe DIP into a lucky pool — serene dipping is serendipity!","romanization":"","translation2":""},
-    {"vocab":"run","phrase":"*He decided to run for office","translation":"mencalonkan diri","part_of_speech":"Verb","pronunciation_ipa":"/rʌn/","pronunciation_guide":"RUN","definition_english":"To compete in an election.","example_sentences":["She will run for president."],"synonyms_antonyms":{"synonyms":["campaign"],"antonyms":[]},"etymology":"Old English rinnan.","collocations":["run for office","run a campaign","run against"],"register":"Formal","mnemonic":"Picture a RUNner in a suit sprinting toward a ballot box.","romanization":"","translation2":""},
-    {"vocab":"ephemeral","phrase":"The ephemeral beauty of cherry blossoms draws millions.","translation":"singkat","part_of_speech":"Adjective","pronunciation_ipa":"/ɪˈfɛm(ə)r(ə)l/","pronunciation_guide":"ih-FEM-er-ul","definition_english":"Lasting for only a short time.","example_sentences":["Fame can be ephemeral."],"synonyms_antonyms":{"synonyms":["fleeting","transient"],"antonyms":["permanent","lasting"]},"etymology":"Greek ephemeros, lasting a day.","collocations":["ephemeral beauty","ephemeral trend","ephemeral pleasure"],"register":"Formal","mnemonic":"EPH sounds like POOF — it vanishes instantly!","romanization":"","translation2":""},
-    {"vocab":"ubiquitous","phrase":"Smartphones are now ubiquitous in modern life.","translation":"ada di mana-mana","part_of_speech":"Adjective","pronunciation_ipa":"/juːˈbɪkwɪtəs/","pronunciation_guide":"yoo-BIK-wih-tus","definition_english":"Present, appearing, or found everywhere.","example_sentences":["Coffee shops have become ubiquitous."],"synonyms_antonyms":{"synonyms":["omnipresent","pervasive"],"antonyms":["rare","scarce"]},"etymology":"Latin ubique, everywhere.","collocations":["ubiquitous presence","seemingly ubiquitous","become ubiquitous"],"register":"Formal","mnemonic":"YOU-BIK-wih-tus: YOU cannot quit seeing it — it is everywhere!","romanization":"","translation2":""},
-    {"vocab":"ameliorate","phrase":"The policy aims to ameliorate living conditions.","translation":"memperbaiki","part_of_speech":"Verb","pronunciation_ipa":"/əˈmiːlɪəreɪt/","pronunciation_guide":"uh-MEE-lee-uh-rayt","definition_english":"To make something bad better.","example_sentences":["Aid organizations work to ameliorate poverty."],"synonyms_antonyms":{"synonyms":["improve","alleviate"],"antonyms":[]},"etymology":"Latin meliorare, to make better.","collocations":["ameliorate conditions","ameliorate suffering","ameliorate the situation"],"register":"Formal","mnemonic":"A MEAL improves your mood — a-MEALiorate!","romanization":"","translation2":""},
-    {"vocab":"sycophant","phrase":"The boss was surrounded by sycophants who never disagreed.","translation":"penjilat","part_of_speech":"Noun","pronunciation_ipa":"/ˈsɪkəfant/","pronunciation_guide":"SIK-oh-fant","definition_english":"A person who flatters powerful people for personal gain.","example_sentences":["Politicians are often surrounded by sycophants."],"synonyms_antonyms":{"synonyms":["flatterer","yes-man"],"antonyms":["critic","detractor"]},"etymology":"Greek sykophantes, informer.","collocations":["office sycophant","surrounded by sycophants","shameless sycophant"],"register":"Informal","mnemonic":"SIC-O-FANT: sick of their fake praise — a sycophant!","romanization":"","translation2":""},
-    {"vocab":"nonchalant","phrase":"She answered the difficult question in a nonchalant tone.","translation":"masa bodoh","part_of_speech":"Adjective","pronunciation_ipa":"/ˌnɒnʃəˈlɑːnt/","pronunciation_guide":"non-shuh-LAHNT","definition_english":"Feeling or appearing casually calm and relaxed.","example_sentences":["He was nonchalant about his promotion."],"synonyms_antonyms":{"synonyms":["casual","indifferent"],"antonyms":["anxious","concerned"]},"etymology":"French, not warm, not concerned.","collocations":["nonchalant attitude","act nonchalant","nonchalant tone"],"register":"Neutral","mnemonic":"NON-shuh-LAHNT: NON-care, like a cat in the sun.","romanization":"","translation2":""},
-    {"vocab":"catharsis","phrase":"Writing in a journal provides emotional catharsis.","translation":"pelepasan emosi","part_of_speech":"Noun","pronunciation_ipa":"/kəˈθɑːsɪs/","pronunciation_guide":"kuh-THAR-sis","definition_english":"The process of releasing strong or repressed emotions.","example_sentences":["Crying during a film can be cathartic."],"synonyms_antonyms":{"synonyms":["release","purging"],"antonyms":[]},"etymology":"Greek katharsis, purification.","collocations":["emotional catharsis","provide catharsis","moment of catharsis"],"register":"Formal","mnemonic":"kuh-THAR-sis: THAR she blows — pressure released!","romanization":"","translation2":""},
+    {"vocab":"serendipity","phrase":"We found the perfect cafe by pure serendipity.","translation":"kebetulan","part_of_speech":"Noun","pronunciation_ipa":"/ˌsɛrənˈdɪpɪti/","pronunciation_guide":"SEHR-en-DIP-ih-tee","definition_english":"The occurrence of events by chance in a happy way.","example_sentences":["It was pure serendipity that we met."],"synonyms_antonyms":{"synonyms":["chance","luck"],"antonyms":[]},"etymology":"Coined by Horace Walpole in 1754.","collocations":["by pure serendipity","happy serendipity","moment of serendipity"],"register":"Neutral","mnemonic":"SERENe DIP into a lucky pool — serene dipping is serendipity!","romanization":"","translation2":"","image_search_query":"lucky surprise gift"},
+    {"vocab":"run","phrase":"*He decided to run for office","translation":"mencalonkan diri","part_of_speech":"Verb","pronunciation_ipa":"/rʌn/","pronunciation_guide":"RUN","definition_english":"To compete in an election.","example_sentences":["She will run for president."],"synonyms_antonyms":{"synonyms":["campaign"],"antonyms":[]},"etymology":"Old English rinnan.","collocations":["run for office","run a campaign","run against"],"register":"Formal","mnemonic":"Picture a RUNner in a suit sprinting toward a ballot box.","romanization":"","translation2":"","image_search_query":"election ballot voting"},
+    {"vocab":"ephemeral","phrase":"The ephemeral beauty of cherry blossoms draws millions.","translation":"singkat","part_of_speech":"Adjective","pronunciation_ipa":"/ɪˈfɛm(ə)r(ə)l/","pronunciation_guide":"ih-FEM-er-ul","definition_english":"Lasting for only a short time.","example_sentences":["Fame can be ephemeral."],"synonyms_antonyms":{"synonyms":["fleeting","transient"],"antonyms":["permanent","lasting"]},"etymology":"Greek ephemeros, lasting a day.","collocations":["ephemeral beauty","ephemeral trend","ephemeral pleasure"],"register":"Formal","mnemonic":"EPH sounds like POOF — it vanishes instantly!","romanization":"","translation2":"","image_search_query":"cherry blossom falling"},
+    {"vocab":"ubiquitous","phrase":"Smartphones are now ubiquitous in modern life.","translation":"ada di mana-mana","part_of_speech":"Adjective","pronunciation_ipa":"/juːˈbɪkwɪtəs/","pronunciation_guide":"yoo-BIK-wih-tus","definition_english":"Present, appearing, or found everywhere.","example_sentences":["Coffee shops have become ubiquitous."],"synonyms_antonyms":{"synonyms":["omnipresent","pervasive"],"antonyms":["rare","scarce"]},"etymology":"Latin ubique, everywhere.","collocations":["ubiquitous presence","seemingly ubiquitous","become ubiquitous"],"register":"Formal","mnemonic":"YOU-BIK-wih-tus: YOU cannot quit seeing it — it is everywhere!","romanization":"","translation2":"","image_search_query":"smartphone crowd everywhere"},
+    {"vocab":"ameliorate","phrase":"The policy aims to ameliorate living conditions.","translation":"memperbaiki","part_of_speech":"Verb","pronunciation_ipa":"/əˈmiːlɪəreɪt/","pronunciation_guide":"uh-MEE-lee-uh-rayt","definition_english":"To make something bad better.","example_sentences":["Aid organizations work to ameliorate poverty."],"synonyms_antonyms":{"synonyms":["improve","alleviate"],"antonyms":[]},"etymology":"Latin meliorare, to make better.","collocations":["ameliorate conditions","ameliorate suffering","ameliorate the situation"],"register":"Formal","mnemonic":"A MEAL improves your mood — a-MEALiorate!","romanization":"","translation2":"","image_search_query":"community helping improvement"},
+    {"vocab":"sycophant","phrase":"The boss was surrounded by sycophants who never disagreed.","translation":"penjilat","part_of_speech":"Noun","pronunciation_ipa":"/ˈsɪkəfant/","pronunciation_guide":"SIK-oh-fant","definition_english":"A person who flatters powerful people for personal gain.","example_sentences":["Politicians are often surrounded by sycophants."],"synonyms_antonyms":{"synonyms":["flatterer","yes-man"],"antonyms":["critic","detractor"]},"etymology":"Greek sykophantes, informer.","collocations":["office sycophant","surrounded by sycophants","shameless sycophant"],"register":"Informal","mnemonic":"SIC-O-FANT: sick of their fake praise — a sycophant!","romanization":"","translation2":"","image_search_query":"flattery praise boss office"},
+    {"vocab":"nonchalant","phrase":"She answered the difficult question in a nonchalant tone.","translation":"masa bodoh","part_of_speech":"Adjective","pronunciation_ipa":"/ˌnɒnʃəˈlɑːnt/","pronunciation_guide":"non-shuh-LAHNT","definition_english":"Feeling or appearing casually calm and relaxed.","example_sentences":["He was nonchalant about his promotion."],"synonyms_antonyms":{"synonyms":["casual","indifferent"],"antonyms":["anxious","concerned"]},"etymology":"French, not warm, not concerned.","collocations":["nonchalant attitude","act nonchalant","nonchalant tone"],"register":"Neutral","mnemonic":"NON-shuh-LAHNT: NON-care, like a cat in the sun.","romanization":"","translation2":"","image_search_query":"relaxed casual person shrug"},
+    {"vocab":"catharsis","phrase":"Writing in a journal provides emotional catharsis.","translation":"pelepasan emosi","part_of_speech":"Noun","pronunciation_ipa":"/kəˈθɑːsɪs/","pronunciation_guide":"kuh-THAR-sis","definition_english":"The process of releasing strong or repressed emotions.","example_sentences":["Crying during a film can be cathartic."],"synonyms_antonyms":{"synonyms":["release","purging"],"antonyms":[]},"etymology":"Greek katharsis, purification.","collocations":["emotional catharsis","provide catharsis","moment of catharsis"],"register":"Formal","mnemonic":"kuh-THAR-sis: THAR she blows — pressure released!","romanization":"","translation2":"","image_search_query":"emotional release journal writing"},
 ]
 
 def _get_few_shot_examples() -> str:
@@ -293,31 +294,42 @@ def detect_vocab_gaps(word_cache: dict) -> list:
         if len(clusters) == 3: break
     return clusters
 
+# ── v3.2: Smarter Unsplash — uses AI-generated image_search_query + relevance validation ──
 def fetch_unsplash_url(args) -> str:
-    vocab, access_key, *_ctx = args
-    context = _ctx[0] if _ctx else ""
+    vocab, access_key, ai_query, pos = args
     if not access_key or not vocab:
         return ""
     try:
-        base  = str(vocab).strip().split()[0]
-        if context:
-            ctx_words = _RE_STRIP_HTML.sub('', str(context)).split()[:4]
-            query = base + " " + " ".join(ctx_words)
+        if ai_query and len(ai_query.strip()) > 2:
+            query = ai_query.strip()
         else:
-            query = base
-        resp  = requests.get(
+            query = str(vocab).strip().split()[0]
+
+        resp = requests.get(
             "https://api.unsplash.com/search/photos",
-            params={"query": query, "per_page": 3, "orientation": "squarish", "content_filter": "high"},
+            params={"query": query, "per_page": 5, "orientation": "squarish", "content_filter": "high"},
             headers={"Authorization": f"Client-ID {access_key}"},
             timeout=8,
         )
         if resp.status_code == 200:
             results = resp.json().get("results", [])
-            if results:
-                raw_url = results[0]["urls"]["small"]
-                if "?" in raw_url:
-                    return raw_url + "&fm=jpg&q=80"
-                return raw_url + "?fm=jpg&q=80"
+            if not results:
+                return ""
+
+            vocab_lower  = vocab.lower().strip()
+            query_words  = {w for w in query.lower().split() if len(w) > 2}
+
+            for result in results[:4]:
+                alt_desc = (result.get("alt_description") or "").lower()
+                desc     = (result.get("description") or "").lower()
+                combined = alt_desc + " " + desc
+                if vocab_lower in combined or any(w in combined for w in query_words):
+                    raw_url = result["urls"]["small"]
+                    return (raw_url + "&fm=jpg&q=80") if "?" in raw_url else (raw_url + "?fm=jpg&q=80")
+
+            raw_url = results[0]["urls"]["small"]
+            return (raw_url + "&fm=jpg&q=80") if "?" in raw_url else (raw_url + "?fm=jpg&q=80")
+
         elif resp.status_code == 403:
             print(f"Unsplash 403 for '{vocab}': invalid key or rate-limited.")
     except Exception as exc:
@@ -331,7 +343,7 @@ def download_image_file(args) -> tuple:
     try:
         resp = requests.get(
             image_url, timeout=10, stream=True,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; VocabApp/3.1)"},
+            headers={"User-Agent": "Mozilla/5.0 (compatible; VocabApp/3.2)"},
         )
         if resp.status_code == 200:
             clean_base  = _RE_CLEAN_FNAME.sub("", vocab_raw)
@@ -348,6 +360,7 @@ def download_image_file(args) -> tuple:
         print(f"Image download error for '{vocab_raw}': {exc}")
     return vocab_raw, None, None
 
+# ── v3.2: max-height updated to 220px in all 4 themes ──
 CYBERPUNK_CSS = f"""
 .card {{
     font-family: 'Roboto Mono', 'Consolas', monospace;
@@ -373,8 +386,8 @@ CYBERPUNK_CSS = f"""
 .content {{ color: {TEXT_COLOR}; padding-left: 13px; }}
 .register-badge {{ display: inline-block; font-size: 0.75em; font-weight: 700; padding: 1px 7px; border-radius: 3px; letter-spacing: 0.08em; text-transform: uppercase; margin-left: 6px; }}
 .card-image-container {{ text-align: center; margin: 0 auto 14px; }}
-.card-image {{ max-width: 90%; max-height: 160px; border-radius: 4px; border: 1px solid {THEME_COLOR}; box-shadow: 0 0 8px rgba(0,255,65,0.25); object-fit: cover; }}
-@media (max-width: 480px) {{ .card {{ font-size: 16px; padding: 15px; }} .vellum-focus-container {{ padding: 15px; }} }}
+.card-image {{ max-width: 92%; max-height: 220px; border-radius: 4px; border: 1px solid {THEME_COLOR}; box-shadow: 0 0 8px rgba(0,255,65,0.25); object-fit: cover; }}
+@media (max-width: 480px) {{ .card {{ font-size: 16px; padding: 15px; }} .vellum-focus-container {{ padding: 15px; }} .card-image {{ max-height: 180px; }} }}
 """
 
 MINIMAL_CSS = """
@@ -389,8 +402,8 @@ MINIMAL_CSS = """
 .content { color: #334155; padding-left: 0; font-size: 0.97em; }
 .register-badge { display: inline-block; font-size: 0.68em; font-weight: 600; padding: 1px 8px; border-radius: 99px; letter-spacing: 0.06em; text-transform: uppercase; margin-left: 6px; }
 .card-image-container { text-align: center; margin: 0 auto 14px; }
-.card-image { max-width: 90%; max-height: 160px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.10); object-fit: cover; }
-@media (max-width: 480px) { .card { font-size: 15px; padding: 16px; } }
+.card-image { max-width: 92%; max-height: 220px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.10); object-fit: cover; }
+@media (max-width: 480px) { .card { font-size: 15px; padding: 16px; } .card-image { max-height: 180px; } }
 """
 
 ACADEMIC_CSS = """
@@ -405,8 +418,8 @@ ACADEMIC_CSS = """
 .content { color: #2c2416; padding-left: 0; }
 .register-badge { display: inline-block; font-size: 0.68em; font-weight: 600; padding: 1px 7px; border-radius: 2px; letter-spacing: 0.07em; text-transform: uppercase; margin-left: 6px; }
 .card-image-container { text-align: center; margin: 0 auto 14px; }
-.card-image { max-width: 90%; max-height: 160px; border-radius: 2px; border: 1px solid #d4b896; box-shadow: 2px 2px 6px rgba(139,58,42,0.10); object-fit: cover; filter: sepia(15%); }
-@media (max-width: 480px) { .card { font-size: 15px; padding: 16px; } }
+.card-image { max-width: 92%; max-height: 220px; border-radius: 2px; border: 1px solid #d4b896; box-shadow: 2px 2px 6px rgba(139,58,42,0.10); object-fit: cover; filter: sepia(15%); }
+@media (max-width: 480px) { .card { font-size: 15px; padding: 16px; } .card-image { max-height: 180px; } }
 """
 
 PASTEL_CSS = """
@@ -421,8 +434,8 @@ PASTEL_CSS = """
 .content { color: #4a3060; font-size: 0.96em; }
 .register-badge { display: inline-block; font-size: 0.7em; font-weight: 700; padding: 2px 10px; border-radius: 99px; letter-spacing: 0.05em; text-transform: uppercase; margin-left: 6px; background: linear-gradient(135deg, rgba(168,85,247,0.15), rgba(236,72,153,0.15)); border: 1px solid #d4b0e8; color: #7c3aed; }
 .card-image-container { text-align: center; margin: 0 auto 14px; }
-.card-image { max-width: 90%; max-height: 160px; border-radius: 16px; box-shadow: 3px 3px 0px rgba(212,176,232,0.5); object-fit: cover; }
-@media (max-width: 480px) { .card { font-size: 15px; padding: 16px; } .vellum-focus-container { border-radius: 16px; } }
+.card-image { max-width: 92%; max-height: 220px; border-radius: 16px; box-shadow: 3px 3px 0px rgba(212,176,232,0.5); object-fit: cover; }
+@media (max-width: 480px) { .card { font-size: 15px; padding: 16px; } .vellum-focus-container { border-radius: 16px; } .card-image { max-height: 180px; } }
 """
 
 CARD_THEMES: dict[str, dict] = {
@@ -453,6 +466,62 @@ def get_repo():
 _BOOT_T_GH_START = time.perf_counter()
 repo = get_repo()
 _BOOT_T_GH_DONE  = time.perf_counter()
+
+# ════════════════════════════════════════════════════════════
+#  v3.2 — SETTINGS PERSISTENCE
+# ════════════════════════════════════════════════════════════
+_SETTINGS_FILE = "settings.json"
+SETTINGS_KEYS = [
+    "target_lang", "target_lang2", "gemini_model_name", "persona", "difficulty",
+    "use_mnemonic", "use_lite_mode", "cloze_sentence_mode", "session_budget",
+    "use_images", "card_theme", "light_mode", "back_section_order", "include_antonyms",
+    "last_deck_name", "last_batch_size", "deck_id", "model_id", "reversed_model_id",
+    "gen_include_audio", "gen_include_slow_audio", "gen_include_sentence_audio",
+    "gen_include_reversed", "gen_include_images",
+]
+
+def load_settings() -> dict:
+    try:
+        file = repo.get_contents(_SETTINGS_FILE)
+        data = json.loads(file.decoded_content.decode("utf-8"))
+        return data if isinstance(data, dict) else {}
+    except GithubException as e:
+        if e.status == 404:
+            return {}
+        return {}
+    except:
+        return {}
+
+def _bg_save_settings(settings: dict):
+    data = json.dumps(settings, ensure_ascii=False, indent=2)
+    for attempt in range(3):
+        try:
+            try:
+                file = repo.get_contents(_SETTINGS_FILE)
+                repo.update_file(file.path, "Update settings v3.2", data, file.sha)
+                _gh_write_tick(); return
+            except GithubException as e:
+                if e.status == 404:
+                    repo.create_file(_SETTINGS_FILE, "Init settings v3.2", data)
+                    _gh_write_tick(); return
+                elif e.status == 409:
+                    time.sleep(1 + attempt); continue
+                raise
+        except Exception as e:
+            if attempt == 2: print(f"Settings save error: {e}")
+            time.sleep(1)
+
+def save_settings():
+    settings = {}
+    for k in SETTINGS_KEYS:
+        val = st.session_state.get(k)
+        if val is not None:
+            if isinstance(val, set):
+                val = list(val)
+            settings[k] = val
+    _get_gh_executor().submit(_bg_save_settings, settings)
+
+# ════════════════════════════════════════════════════════════
 
 _COMBINED_USAGE_FILE = "usage_combined.json"
 
@@ -797,6 +866,15 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6, dry_run=Fal
         "Examples: 'SEHR-en-DIP-ih-tee', 'NON-shuh-lahnt', 'uh-MEE-lee-uh-rayt'. "
         "Output ONLY the phonetics — NO 'say:' prefix."
     )
+    # v3.2: AI generates concrete Unsplash image query — fixes bad image results
+    image_query_rule = (
+        "\n16. 'image_search_query': Exactly 2-3 words for an Unsplash image search. "
+        "MUST be a CONCRETE, PHYSICAL, VISUAL concept. "
+        "For concrete nouns: just the noun itself (e.g., 'car', 'apple tree', 'red bicycle'). "
+        "For verbs/abstract words: pick the most iconic VISUAL SCENE for that meaning "
+        "(e.g., 'run for office' → 'election ballot voting'; 'ameliorate' → 'helping community people'). "
+        "NEVER paste the definition. NEVER use abstract philosophy words. MAX 3 words."
+    )
 
     word_cache     = st.session_state.get("word_cache", {})
     cached_results = [word_cache[vp[0].strip().lower()]
@@ -854,12 +932,13 @@ def generate_anki_card_data_batched(vocab_phrase_list, batch_size=6, dry_run=Fal
 
 STEP 0 — SILENT SELF-CHECK (do NOT output this step): Before writing JSON, silently verify:
 (a) Will 'translation' contain ONLY the {TARGET_LANG} word/phrase, NOT a full sentence?
-(b) Does every item have ALL required keys including 'pronunciation_guide'?
+(b) Does every item have ALL required keys including 'pronunciation_guide' and 'image_search_query'?
 (c) Is 'register' exactly one of: Formal, Informal, Slang, Technical, Neutral?
 (d) Are field lengths within limits in Rule 14?
 (e) For polysemous words: has the DISAMBIGUATION RULE been applied?
 (f) Is 'pronunciation_guide' clean phonetics with NO 'say:' prefix?
 (g) For 'etymology': am I >90% confident? If not, have I written "Origin uncertain."?
+(h) Is 'image_search_query' a concrete 2-3 word visual concept with NO abstract or definition text?
 
 Output EXACTLY {len(batch_dicts)} items as a JSON array. No extra text or commentary.{lite_note}
 
@@ -887,7 +966,7 @@ RULES:
    • TECHNICAL markers: domain-specific jargon, specialized nomenclature, acronyms, symbols
    • INFORMAL markers: casual everyday language, simple syntax, spoken-style contractions
    When phrase context and the word itself signal DIFFERENT registers, prioritize the PHRASE.
-   ANTONYM RULE: If no true antonym exists, return [] for 'antonyms'. NEVER invent forced antonyms.{difficulty_rule}{mnemonic_rule}{romanization_rule}{lang2_rule}{length_limits}{pronunciation_guide_rule}
+   ANTONYM RULE: If no true antonym exists, return [] for 'antonyms'. NEVER invent forced antonyms.{difficulty_rule}{mnemonic_rule}{romanization_rule}{lang2_rule}{length_limits}{pronunciation_guide_rule}{image_query_rule}
    ETYMOLOGY RULE: If you are NOT >90% confident in the word's historical origin,
    write exactly "Origin uncertain." NEVER fabricate plausible-sounding but unverified etymologies.
 
@@ -899,7 +978,8 @@ BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}
 /* REQUIRED JSON KEYS per item:
    vocab, translation, part_of_speech, pronunciation_ipa, pronunciation_guide,
    definition_english, example_sentences, synonyms_antonyms,
-   etymology, collocations, register, mnemonic, romanization, translation2 */"""
+   etymology, collocations, register, mnemonic, romanization, translation2,
+   image_search_query */"""
 
             log_tpm_chars(len(prompt))
 
@@ -928,7 +1008,8 @@ BATCH INPUT: {json.dumps(batch_dicts, ensure_ascii=False)}
                          "synonyms_antonyms": {"synonyms": ["mock","simulated"], "antonyms": []},
                          "etymology": "Simulated.", "collocations": ["mock one","mock two"],
                          "register": "Neutral", "mnemonic": "Mock mnemonic.", "romanization": "",
-                         "translation2": "mock-t2" if lang2 != "None (disabled)" else ""}
+                         "translation2": "mock-t2" if lang2 != "None (disabled)" else "",
+                         "image_search_query": v[0]}
                         for v in batch]
                 all_new_data.extend(mock)
                 for card in mock: word_cache[card['vocab'].strip().lower()] = card
@@ -1030,12 +1111,19 @@ def process_anki_data(df_subset, batch_size=6, dry_run=False):
                 img_url_lookup[v] = cached_url
         missing_img = [v for v in all_vocabs if v not in img_url_lookup]
         if missing_img:
-            def_map = {
-                c.get("vocab","").strip().lower(): c.get("definition_english","")
+            iq_map = {
+                c.get("vocab","").strip().lower(): str(c.get("image_search_query","") or "").strip()
+                for c in all_card_data if c.get("vocab")
+            }
+            pos_map = {
+                c.get("vocab","").strip().lower(): str(c.get("part_of_speech","") or "").title()
                 for c in all_card_data if c.get("vocab")
             }
             with st.spinner(f"🖼️ Fetching {len(missing_img)} image(s) from Unsplash…"):
-                fetch_args = [(v, UNSPLASH_ACCESS_KEY, def_map.get(v,"")) for v in missing_img]
+                fetch_args = [
+                    (v, UNSPLASH_ACCESS_KEY, iq_map.get(v, ""), pos_map.get(v, ""))
+                    for v in missing_img
+                ]
                 with concurrent.futures.ThreadPoolExecutor(max_workers=5) as exc:
                     fetched_urls = list(exc.map(fetch_unsplash_url, fetch_args))
             for v, url in zip(missing_img, fetched_urls):
@@ -1368,6 +1456,7 @@ def save_to_github(dataframe: pd.DataFrame) -> bool:
     st.caption(f"⏱️ GitHub save: {time.perf_counter()-t0:.2f}s ({csv_bytes/1024:.0f} KB)")
     return True
 
+# ── Boot: load usage + settings ──
 _BOOT_T_GH2 = time.perf_counter()
 if "rpd_count" not in st.session_state or "rpm_timestamps" not in st.session_state:
     _init_rpd, _init_rpm = load_combined_usage()
@@ -1376,17 +1465,25 @@ else:
     _init_rpm = st.session_state.rpm_timestamps
 _BOOT_T_USAGE_DONE = time.perf_counter()
 
+# v3.2: Load saved settings once on boot
+if "settings_loaded" not in st.session_state:
+    _saved_settings = load_settings()
+    st.session_state["settings_loaded"] = True
+else:
+    _saved_settings = {}
+
+# ── Session state defaults — sidebar & generate tab values restored from settings.json ──
 st.session_state.setdefault("gemini_key",              DEFAULT_GEMINI_KEY)
 st.session_state.setdefault("vocab_df",                load_data().copy())
 st.session_state.setdefault("rpd_count",               _init_rpd)
 st.session_state.setdefault("rpm_timestamps",          _init_rpm)
-st.session_state.setdefault("deck_id",                 2059400110)
+st.session_state.setdefault("deck_id",                 _saved_settings.get("deck_id", 2059400110))
 st.session_state.setdefault("bulk_preview_df",         None)
 st.session_state.setdefault("apkg_buffer",             None)
 st.session_state.setdefault("processed_vocabs",        [])
-st.session_state.setdefault("model_id",                1607392319)
-st.session_state.setdefault("reversed_model_id",       (1607392319+7919)%(1<<31))
-st.session_state.setdefault("include_antonyms",        True)
+st.session_state.setdefault("model_id",                _saved_settings.get("model_id", 1607392319))
+st.session_state.setdefault("reversed_model_id",       _saved_settings.get("reversed_model_id", (1607392319+7919)%(1<<31)))
+st.session_state.setdefault("include_antonyms",        _saved_settings.get("include_antonyms", True))
 st.session_state.setdefault("dry_run",                 False)
 st.session_state.setdefault("processed_cache",         {})
 _init_word_cache = load_word_cache() if "word_cache" not in st.session_state else st.session_state.word_cache
@@ -1395,20 +1492,20 @@ st.session_state.setdefault("input_phrase",            "")
 st.session_state.setdefault("input_vocab",             "")
 st.session_state.setdefault("_quota_cache_key",        None)
 st.session_state.setdefault("_quota_cache",            (20, 0))
-st.session_state.setdefault("target_lang",             "Indonesian")
-st.session_state.setdefault("target_lang2",            "None (disabled)")
-st.session_state.setdefault("gemini_model_name",       "gemini-2.5-flash-lite")
-st.session_state.setdefault("persona",                 "General")
-st.session_state.setdefault("difficulty",              "Intermediate")
+st.session_state.setdefault("target_lang",             _saved_settings.get("target_lang", "Indonesian"))
+st.session_state.setdefault("target_lang2",            _saved_settings.get("target_lang2", "None (disabled)"))
+st.session_state.setdefault("gemini_model_name",       _saved_settings.get("gemini_model_name", "gemini-2.5-flash-lite"))
+st.session_state.setdefault("persona",                 _saved_settings.get("persona", "General"))
+st.session_state.setdefault("difficulty",              _saved_settings.get("difficulty", "Intermediate"))
 st.session_state.setdefault("tpm_log",                 [])
 st.session_state.setdefault("failed_words",            [])
 st.session_state.setdefault("exported_hashes",         set())
 st.session_state.setdefault("preview_notes",           [])
-st.session_state.setdefault("last_deck_name",          "-English Learning::Vocabulary")
-st.session_state.setdefault("last_batch_size",         6)
+st.session_state.setdefault("last_deck_name",          _saved_settings.get("last_deck_name", "-English Learning::Vocabulary"))
+st.session_state.setdefault("last_batch_size",         _saved_settings.get("last_batch_size", 6))
 st.session_state.setdefault("model_id_confirm",        False)
 st.session_state.setdefault("undo_df",                 None)
-st.session_state.setdefault("use_mnemonic",            False)
+st.session_state.setdefault("use_mnemonic",            _saved_settings.get("use_mnemonic", False))
 st.session_state.setdefault("editing_notes",           None)
 st.session_state.setdefault("editing_deck_name",       "")
 st.session_state.setdefault("editing_audio",           True)
@@ -1419,20 +1516,25 @@ st.session_state.setdefault("editing_images",          False)
 st.session_state.setdefault("generation_checkpoint",   [])
 st.session_state.setdefault("checkpoint_name",         "")
 st.session_state.setdefault("deck_stats",              {})
-st.session_state.setdefault("light_mode",              False)
+st.session_state.setdefault("light_mode",              _saved_settings.get("light_mode", False))
 st.session_state.setdefault("session_words_added",     0)
 st.session_state.setdefault("session_cards_generated", 0)
 st.session_state.setdefault("_quota_reset_warned",     False)
 st.session_state.setdefault("session_api_calls_start", _init_rpd)
 st.session_state.setdefault("_boot_profiled",          False)
-st.session_state.setdefault("card_theme",              "🟢 Cyberpunk")
-st.session_state.setdefault("use_lite_mode",           False)
-st.session_state.setdefault("session_budget",          10)
-st.session_state.setdefault("cloze_sentence_mode",     False)
+st.session_state.setdefault("card_theme",              _saved_settings.get("card_theme", "🟢 Cyberpunk"))
+st.session_state.setdefault("use_lite_mode",           _saved_settings.get("use_lite_mode", False))
+st.session_state.setdefault("session_budget",          _saved_settings.get("session_budget", 10))
+st.session_state.setdefault("cloze_sentence_mode",     _saved_settings.get("cloze_sentence_mode", False))
 st.session_state.setdefault("editing_cloze_sentence",  False)
-st.session_state.setdefault("use_images",              False)
+st.session_state.setdefault("use_images",              _saved_settings.get("use_images", False))
+st.session_state.setdefault("gen_include_audio",           _saved_settings.get("gen_include_audio", True))
+st.session_state.setdefault("gen_include_slow_audio",      _saved_settings.get("gen_include_slow_audio", False))
+st.session_state.setdefault("gen_include_sentence_audio",  _saved_settings.get("gen_include_sentence_audio", False))
+st.session_state.setdefault("gen_include_reversed",        _saved_settings.get("gen_include_reversed", False))
+st.session_state.setdefault("gen_include_images",          _saved_settings.get("gen_include_images", False))
 
-st.session_state.setdefault("back_section_order", list(BACK_SECTIONS_DEFAULT))
+st.session_state.setdefault("back_section_order", _saved_settings.get("back_section_order", list(BACK_SECTIONS_DEFAULT)))
 _bso     = st.session_state.back_section_order
 _missing = [s for s in BACK_SECTIONS_DEFAULT if s not in _bso]
 if _missing:
@@ -1454,6 +1556,8 @@ if not st.session_state.get("_boot_profiled", False):
     _t_gh    = _BOOT_T_GH_DONE - _BOOT_T_GH_START
     _t_usage = _BOOT_T_USAGE_DONE - _BOOT_T_GH2
     st.toast(f"⚡ Cold boot: **{_t_total:.1f}s** (GH {_t_gh:.1f}s · usage {_t_usage:.1f}s)", icon="⏱️")
+    if _saved_settings:
+        st.toast("💾 Settings restored from cloud!", icon="✅")
 
 
 def mark_as_done_callback():
@@ -1540,8 +1644,12 @@ def render_section_reorder_mobile():
                 st.session_state.back_section_order = order; st.rerun()
 
 
+# ════════════════════════════════════════════════════════════
+#  v3.2 SIDEBAR — Collapsible sections
+# ════════════════════════════════════════════════════════════
 with st.sidebar:
     st.header("⚙️ Settings")
+
     total_words = len(st.session_state.vocab_df)
     new_words   = len(st.session_state.vocab_df[st.session_state.vocab_df['status'] == 'New'])
     col1, col2  = st.columns(2)
@@ -1558,112 +1666,138 @@ with st.sidebar:
         f"📡 GH: **{_gh_writes}**"
         + (" ⚠️" if _gh_writes >= GH_WRITE_WARN_THRESHOLD else "")
     )
-    if _gh_writes >= GH_WRITE_WARN_THRESHOLD:
-        st.caption(f"⚠️ {_gh_writes} GH writes — approaching hourly limit (100).")
 
-    rpm_live = len([ts for ts in st.session_state.rpm_timestamps
-                    if (datetime.now() - ts).total_seconds() < 60])
-    st.progress(rpm_live / 5,                    text=f"RPM Live: {rpm_live}/5 (last 60s)")
-    st.progress(st.session_state.rpd_count / 20, text=f"RPD: {st.session_state.rpd_count}/20")
-    tpm_estimate = get_rolling_tpm()
-    tpm_frac     = min(tpm_estimate / 1_000_000, 1.0)
-    tpm_icon     = "🟢" if tpm_frac < 0.60 else ("🟡" if tpm_frac < 0.85 else "🔴")
-    st.progress(tpm_frac, text=f"TPM est: {tpm_icon} {tpm_estimate:,} / 1,000,000 (last 60s)")
-    st.caption(f"⏰ Quota resets in **{quota_reset_countdown()}** (UTC midnight)")
-    st.divider()
-
-    st.selectbox("🎯 Definition Language",
-                 ["Indonesian","Spanish","French","German","Japanese","Chinese (Mandarin)","English (Simple)"],
-                 index=0, key="target_lang")
-    st.selectbox("🤖 AI Model",
-                 ["gemini-2.5-flash-lite","gemini-2.0-flash-exp"], index=0, key="gemini_model_name")
-    st.selectbox("🧠 Subject Persona", list(PERSONAS.keys()), index=0, key="persona")
-    st.radio("📊 Difficulty Level", list(DIFFICULTY_SUFFIX.keys()), index=1, horizontal=True, key="difficulty")
-    if st.session_state.difficulty != "Intermediate":
-        st.caption(f"📌 Rule 10: _{DIFFICULTY_SUFFIX[st.session_state.difficulty]}_")
-
-    st.checkbox("💡 Generate Memory Hooks (Chain-of-Thought)", key="use_mnemonic")
-    if st.session_state.use_mnemonic and not st.session_state.use_lite_mode:
-        st.caption("📌 Rule 11 active (Chain-of-Thought).")
-
-    st.checkbox("⚡ Lite Mode Prompt", key="use_lite_mode",
-                help="Skips Collocations, Etymology & Mnemonic — saves ~30% tokens per batch.")
-    if st.session_state.use_lite_mode:
-        st.caption("📌 Lite Mode ON — collocations, etymology & mnemonic will be empty.")
-
-    st.number_input("💰 Session API Budget", min_value=1, max_value=20,
-                    value=st.session_state.session_budget, step=1, key="session_budget")
-    _sess_used    = max(0, st.session_state.rpd_count - st.session_state.get("session_api_calls_start", 0))
-    _sess_left    = max(0, st.session_state.session_budget - _sess_used)
-    _budget_color = "🟢" if _sess_left > 3 else ("🟡" if _sess_left > 0 else "🔴")
-    st.caption(f"{_budget_color} Session used: **{_sess_used}/{st.session_state.session_budget}** · {_sess_left} left")
-
-    st.selectbox("🌐 Second Language (optional)", LANG2_OPTIONS, index=0, key="target_lang2")
-    if st.session_state.target_lang2 != "None (disabled)":
-        st.caption(f"📌 Rule 13 active: Translation2 → {st.session_state.target_lang2}")
-
-    st.checkbox("🎴 Cloze Sentence Mode", key="cloze_sentence_mode")
-    if st.session_state.cloze_sentence_mode:
-        st.caption("📌 Cloze sentence mode ON.")
+    # v3.2: Prominent Save Settings button
+    if st.button("💾 Save My Settings", use_container_width=True, type="primary",
+                 help="Saves all your sidebar & generate tab preferences to GitHub"):
+        save_settings()
+        st.toast("✅ Settings saved to cloud!", icon="💾")
 
     st.divider()
-    if UNSPLASH_ACCESS_KEY:
-        st.checkbox("🖼️ Include Word Images (Unsplash)", key="use_images",
-                    help="Fetches one image per vocab word. Only Access Key needed. ~50 calls/hour free.")
-        if st.session_state.use_images:
-            st.caption("🖼️ Images ON · URLs cached in word cache to avoid re-fetching.")
-    else:
-        st.caption("🖼️ _Images disabled_ — add `UNSPLASH_ACCESS_KEY` to secrets.toml to enable.")
 
-    st.divider()
-    st.selectbox("🎨 Card Theme", options=list(CARD_THEMES.keys()),
-                 index=list(CARD_THEMES.keys()).index(st.session_state.get("card_theme","🟢 Cyberpunk")),
-                 key="card_theme")
-    st.caption(f"_{CARD_THEMES[st.session_state.card_theme]['description']}_")
+    # Collapsible: AI & Language
+    with st.expander("🤖 AI & Language", expanded=False):
+        st.selectbox("🎯 Definition Language",
+                     ["Indonesian","Spanish","French","German","Japanese","Chinese (Mandarin)","English (Simple)"],
+                     index=["Indonesian","Spanish","French","German","Japanese","Chinese (Mandarin)","English (Simple)"].index(
+                         st.session_state.get("target_lang","Indonesian")),
+                     key="target_lang")
+        st.selectbox("🤖 AI Model",
+                     ["gemini-2.5-flash-lite","gemini-2.0-flash-exp"],
+                     index=["gemini-2.5-flash-lite","gemini-2.0-flash-exp"].index(
+                         st.session_state.get("gemini_model_name","gemini-2.5-flash-lite")),
+                     key="gemini_model_name")
+        st.selectbox("🧠 Subject Persona", list(PERSONAS.keys()),
+                     index=list(PERSONAS.keys()).index(st.session_state.get("persona","General")),
+                     key="persona")
+        st.radio("📊 Difficulty Level", list(DIFFICULTY_SUFFIX.keys()),
+                 index=list(DIFFICULTY_SUFFIX.keys()).index(st.session_state.get("difficulty","Intermediate")),
+                 horizontal=True, key="difficulty")
+        if st.session_state.difficulty != "Intermediate":
+            st.caption(f"📌 _{DIFFICULTY_SUFFIX[st.session_state.difficulty]}_")
+        st.selectbox("🌐 Second Language (optional)", LANG2_OPTIONS,
+                     index=LANG2_OPTIONS.index(st.session_state.get("target_lang2","None (disabled)")),
+                     key="target_lang2")
+        if st.session_state.target_lang2 != "None (disabled)":
+            st.caption(f"📌 Rule 13: Translation2 → {st.session_state.target_lang2}")
+        st.checkbox("💡 Memory Hooks (Chain-of-Thought)", key="use_mnemonic",
+                    help="Generates a phonetic mnemonic for each word")
+        if st.session_state.use_mnemonic and not st.session_state.use_lite_mode:
+            st.caption("📌 Rule 11 active.")
+        st.checkbox("⚡ Lite Mode Prompt", key="use_lite_mode",
+                    help="Skips Collocations, Etymology & Mnemonic — saves ~30% tokens per batch.")
+        if st.session_state.use_lite_mode:
+            st.caption("📌 Lite Mode ON.")
+        st.checkbox("🎴 Cloze Sentence Mode", key="cloze_sentence_mode",
+                    help="Cloze deletes the word from an example sentence instead of the phrase")
+        if st.session_state.cloze_sentence_mode:
+            st.caption("📌 Cloze sentence mode ON.")
 
-    with st.expander("🃏 Card Back Section Order", expanded=False):
-        render_section_reorder_mobile()
+    # Collapsible: Budget & Quota
+    with st.expander("💰 Budget & Quota", expanded=False):
+        st.number_input("💰 Session API Budget", min_value=1, max_value=20,
+                        value=st.session_state.session_budget, step=1, key="session_budget",
+                        help="Max AI calls per session (safety governor)")
+        _sess_used    = max(0, st.session_state.rpd_count - st.session_state.get("session_api_calls_start", 0))
+        _sess_left    = max(0, st.session_state.session_budget - _sess_used)
+        _budget_color = "🟢" if _sess_left > 3 else ("🟡" if _sess_left > 0 else "🔴")
+        st.caption(f"{_budget_color} Session: **{_sess_used}/{st.session_state.session_budget}** · {_sess_left} left")
+        rpm_live = len([ts for ts in st.session_state.rpm_timestamps
+                        if (datetime.now() - ts).total_seconds() < 60])
+        st.progress(rpm_live / 5,                    text=f"RPM Live: {rpm_live}/5 (last 60s)")
+        st.progress(st.session_state.rpd_count / 20, text=f"RPD: {st.session_state.rpd_count}/20")
+        tpm_estimate = get_rolling_tpm()
+        tpm_frac     = min(tpm_estimate / 1_000_000, 1.0)
+        tpm_icon     = "🟢" if tpm_frac < 0.60 else ("🟡" if tpm_frac < 0.85 else "🔴")
+        st.progress(tpm_frac, text=f"TPM: {tpm_icon} {tpm_estimate:,} / 1,000,000")
+        st.caption(f"⏰ Quota resets in **{quota_reset_countdown()}** (UTC midnight)")
+        if _gh_writes >= GH_WRITE_WARN_THRESHOLD:
+            st.caption(f"⚠️ {_gh_writes} GH writes — approaching hourly limit (100).")
 
-    st.toggle("☀️ Light Mode", key="light_mode")
-    st.divider()
-
-    has_exported = (len(st.session_state.processed_vocabs) > 0
-                    or len(st.session_state.exported_hashes) > 0)
-    if st.button("🔄 Regenerate Note Type Model ID"):
-        if has_exported and not st.session_state.model_id_confirm:
-            st.session_state.model_id_confirm = True
+    # Collapsible: Card Style
+    with st.expander("🎨 Card Style", expanded=False):
+        if UNSPLASH_ACCESS_KEY:
+            st.checkbox("🖼️ Include Word Images (Unsplash)", key="use_images",
+                        help="Fetches one image per vocab word from Unsplash")
+            if st.session_state.use_images:
+                st.caption("🖼️ Images ON · AI-generated queries ensure relevance (v3.2).")
         else:
-            new_mid = random.randrange(1 << 30, 1 << 31)
-            st.session_state.model_id          = new_mid
-            st.session_state.reversed_model_id = (new_mid + 7919) % (1 << 31)
-            st.session_state.model_id_confirm  = False
-            st.success(f"New Model ID: {st.session_state.model_id}")
-    if st.session_state.model_id_confirm:
-        st.warning("⚠️ Changing Model ID may orphan existing Anki cards. **Click again to confirm.**")
-    st.caption(f"Current Model ID: {st.session_state.model_id}")
-    st.caption("ℹ️ v3.1 adds POSBadge + Image fields. Regenerate Model ID if you have existing cards.")
+            st.caption("🖼️ _Images disabled_ — add `UNSPLASH_ACCESS_KEY` to secrets.toml")
+        st.selectbox("🎨 Card Theme", options=list(CARD_THEMES.keys()),
+                     index=list(CARD_THEMES.keys()).index(st.session_state.get("card_theme","🟢 Cyberpunk")),
+                     key="card_theme")
+        st.caption(f"_{CARD_THEMES[st.session_state.card_theme]['description']}_")
+        with st.expander("🃏 Card Back Section Order", expanded=False):
+            render_section_reorder_mobile()
+        st.toggle("☀️ Light Mode", key="light_mode")
 
-    if st.button("🗑️ Clear Word Cache"):
-        st.session_state.word_cache            = {}
-        st.session_state.processed_cache       = {}
-        st.session_state.generation_checkpoint = []
-        st.session_state.checkpoint_name       = ""
-        st.session_state["_gap_cache_key"]     = None
-        load_word_cache.clear()
-        save_word_cache({})
-        st.toast("🗑️ Cache cleared.")
+    # Collapsible: Advanced
+    with st.expander("⚙️ Advanced", expanded=False):
+        has_exported = (len(st.session_state.processed_vocabs) > 0
+                        or len(st.session_state.exported_hashes) > 0)
+        if st.button("🔄 Regenerate Note Type Model ID", use_container_width=True):
+            if has_exported and not st.session_state.model_id_confirm:
+                st.session_state.model_id_confirm = True
+            else:
+                new_mid = random.randrange(1 << 30, 1 << 31)
+                st.session_state.model_id          = new_mid
+                st.session_state.reversed_model_id = (new_mid + 7919) % (1 << 31)
+                st.session_state.model_id_confirm  = False
+                st.success(f"New Model ID: {st.session_state.model_id}")
+        if st.session_state.model_id_confirm:
+            st.warning("⚠️ Changing Model ID may orphan existing Anki cards. **Click again to confirm.**")
+        st.caption(f"Current Model ID: {st.session_state.model_id}")
+        st.caption("ℹ️ v3.2 — Regenerate if you have existing cards from an older version.")
 
-    if not st.session_state.vocab_df.empty:
-        st.download_button("💾 Backup Database (CSV)",
-                           st.session_state.vocab_df.to_csv(index=False).encode('utf-8'),
-                           f"vocab_backup_{date.today()}.csv", "text/csv")
+        if st.button("🗑️ Clear Word Cache", use_container_width=True):
+            st.session_state.word_cache            = {}
+            st.session_state.processed_cache       = {}
+            st.session_state.generation_checkpoint = []
+            st.session_state.checkpoint_name       = ""
+            st.session_state["_gap_cache_key"]     = None
+            load_word_cache.clear()
+            save_word_cache({})
+            st.toast("🗑️ Cache cleared.")
 
-    with st.expander("📜 What's New", expanded=False):
-        for version, note in CHANGELOG:
-            st.markdown(f"**{version}** — {note}")
+        if not st.session_state.vocab_df.empty:
+            st.download_button("💾 Backup Database (CSV)",
+                               st.session_state.vocab_df.to_csv(index=False).encode('utf-8'),
+                               f"vocab_backup_{date.today()}.csv", "text/csv",
+                               use_container_width=True)
+
+        with st.expander("📜 What's New", expanded=False):
+            for version, note in CHANGELOG:
+                st.markdown(f"**{version}** — {note}")
 
 
-tab1, tab2, tab3 = st.tabs(["➕ Add", "✏️ Edit / Review", "📇 Generate Anki"])
+# ════════════════════════════════════════════════════════════
+#  TABS
+# ════════════════════════════════════════════════════════════
+tab1, tab2, tab3 = st.tabs([
+    f"➕ Add ({total_words})",
+    f"✏️ Edit / Review",
+    f"📇 Generate ({new_words} New)",
+])
 
 with tab1:
     done_words  = st.session_state.vocab_df[st.session_state.vocab_df['status'] == 'Done']['vocab'].tolist()
@@ -1894,6 +2028,16 @@ with tab2:
 with tab3:
     @st.fragment
     def render_tab3():
+        # v3.2: Mobile-friendly CSS
+        st.markdown("""<style>
+@media (max-width: 640px) {
+    [data-testid="column"] { min-width: 100% !important; flex: 100% !important; }
+    .stCheckbox label { font-size: 1.02em !important; padding: 3px 0 !important; }
+    .stButton > button { min-height: 46px !important; font-size: 1.05em !important; }
+    [data-testid="stDataFrame"] { font-size: 0.85em !important; }
+}
+</style>""", unsafe_allow_html=True)
+
         checkpoint = st.session_state.get("generation_checkpoint", [])
         ckpt_name  = st.session_state.get("checkpoint_name", f"{len(checkpoint)} cards")
         if checkpoint and st.session_state.editing_notes is None and st.session_state.apkg_buffer is None:
@@ -2144,7 +2288,7 @@ with tab3:
                     st.session_state.failed_words = []
                     st.rerun(scope="app")
 
-        st.subheader("📇 Generate Cyberpunk Anki Deck")
+        st.subheader("📇 Generate Anki Deck")
 
         deck_col1, deck_col2 = st.columns([3, 1])
         deck_name_raw   = deck_col1.text_input("📦 Deck Name (use :: for sub-decks)",
@@ -2167,25 +2311,38 @@ with tab3:
         _recommended  = min(15, max(1, math.ceil(_n_words / max(1, int(_r_left * 0.6)))))
         raw_batch     = st.slider("⚡ Batch Size (Words per Request)", 1, 15, _recommended)
         if raw_batch == _recommended:
-            st.caption(f"✅ Using recommended batch size **{_recommended}** "
+            st.caption(f"✅ Recommended batch size **{_recommended}** "
                        f"({math.ceil(_n_words/_recommended)} request(s) needed).")
         else:
-            st.caption(f"⚙️ Custom batch size: **{raw_batch}** (recommended was {_recommended}).")
+            st.caption(f"⚙️ Custom: **{raw_batch}** (recommended was {_recommended}).")
         max_safe   = max(1, math.ceil(_n_words/max(1,requests_left))) if requests_left > 0 else 1
         batch_size = min(raw_batch, max_safe)
         st.session_state.last_batch_size = batch_size
         if batch_size != raw_batch:
             st.caption(f"⚠️ Capped to **{batch_size}** by quota limit.")
 
-        include_audio          = st.checkbox("🔊 Generate Audio Files",                     value=True)
-        include_slow_audio     = st.checkbox("🐢 Also slow pronunciation audio",             value=False)
-        include_sentence_audio = st.checkbox("🔊 Also audio for example sentences",          value=False)
-        include_reversed       = st.checkbox("🔄 Include Reversed Cards (Translation→Word)", value=False)
-        include_images         = st.checkbox("🖼️ Embed Unsplash images in deck",             value=False,
-                                             disabled=not (UNSPLASH_ACCESS_KEY and st.session_state.use_images))
-        st.session_state.include_antonyms = st.checkbox("➖ Include Antonyms in Card Back",
-                                                         value=st.session_state.include_antonyms)
-        st.session_state.dry_run = st.checkbox("🔬 Dry Run Mode (simulate, no quota)", value=st.session_state.dry_run)
+        # v3.2: Card options — 2-column grid, mobile-friendly, saved to session state
+        st.markdown("**⚙️ Card Options**")
+        opt_col1, opt_col2 = st.columns(2)
+        with opt_col1:
+            include_audio          = st.checkbox("🔊 Audio files",    key="gen_include_audio",
+                                                  help="Generates MP3 pronunciation for each word")
+            include_slow_audio     = st.checkbox("🐢 Slow audio",     key="gen_include_slow_audio",
+                                                  help="Adds a slow-speed pronunciation MP3")
+            include_sentence_audio = st.checkbox("🔊 Sentence audio", key="gen_include_sentence_audio",
+                                                  help="Adds audio of the example sentence")
+        with opt_col2:
+            include_reversed       = st.checkbox("🔄 Reversed cards", key="gen_include_reversed",
+                                                  help="Adds Translation→Word cards")
+            include_images         = st.checkbox("🖼️ Embed images",   key="gen_include_images",
+                                                  disabled=not (UNSPLASH_ACCESS_KEY and st.session_state.use_images),
+                                                  help="Requires Unsplash key + Images ON in Card Style")
+            st.session_state.include_antonyms = st.checkbox("➖ Include antonyms",
+                                                              value=st.session_state.include_antonyms,
+                                                              help="Show antonyms section on card back")
+
+        st.session_state.dry_run = st.checkbox("🔬 Dry Run Mode (simulate, no quota)",
+                                                value=st.session_state.dry_run)
 
         def _is_dup(vocab_raw: str) -> bool:
             return hashlib.sha256(str(vocab_raw).lower().encode('utf-8')).hexdigest()[:16] \
