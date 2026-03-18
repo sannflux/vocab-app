@@ -309,16 +309,9 @@ def detect_vocab_gaps(word_cache: dict) -> list:
     return clusters
 
 # ── v3.2: Smarter Unsplash — uses AI-generated image_search_query + relevance validation ──
-def fetch_unsplash_url(args) -> str:
-    vocab, access_key, ai_query, pos = args
-    if not access_key or not vocab:
-        return ""
+def _unsplash_search(query: str, access_key: str) -> list:
+    """Single Unsplash search — returns results list or []."""
     try:
-        if ai_query and len(ai_query.strip()) > 2:
-            query = ai_query.strip()
-        else:
-            query = str(vocab).strip().split()[0]
-
         resp = requests.get(
             "https://api.unsplash.com/search/photos",
             params={"query": query, "per_page": 5, "orientation": "squarish", "content_filter": "high"},
@@ -326,28 +319,47 @@ def fetch_unsplash_url(args) -> str:
             timeout=8,
         )
         if resp.status_code == 200:
-            results = resp.json().get("results", [])
-            if not results:
-                return ""
-
-            vocab_lower  = vocab.lower().strip()
-            query_words  = {w for w in query.lower().split() if len(w) > 2}
-
-            for result in results[:4]:
-                alt_desc = (result.get("alt_description") or "").lower()
-                desc     = (result.get("description") or "").lower()
-                combined = alt_desc + " " + desc
-                if vocab_lower in combined or any(w in combined for w in query_words):
-                    raw_url = result["urls"]["small"]
-                    return (raw_url + "&fm=jpg&q=80") if "?" in raw_url else (raw_url + "?fm=jpg&q=80")
-
-            raw_url = results[0]["urls"]["small"]
-            return (raw_url + "&fm=jpg&q=80") if "?" in raw_url else (raw_url + "?fm=jpg&q=80")
-
+            return resp.json().get("results", [])
         elif resp.status_code == 403:
-            print(f"Unsplash 403 for '{vocab}': invalid key or rate-limited.")
+            print(f"Unsplash 403: invalid key or rate-limited.")
     except Exception as exc:
-        print(f"Unsplash fetch error for '{vocab}': {exc}")
+        print(f"Unsplash search error: {exc}")
+    return []
+
+def _pick_best_result(results: list, vocab: str, query: str) -> str:
+    """Pick the most relevant result URL, with fallback to first result."""
+    if not results:
+        return ""
+    vocab_lower = vocab.lower().strip()
+    query_words = {w for w in query.lower().split() if len(w) > 2}
+    for result in results[:4]:
+        combined = ((result.get("alt_description") or "") + " " +
+                    (result.get("description") or "")).lower()
+        if vocab_lower in combined or any(w in combined for w in query_words):
+            raw_url = result["urls"]["small"]
+            return (raw_url + "&fm=jpg&q=80") if "?" in raw_url else (raw_url + "?fm=jpg&q=80")
+    # Fallback: first result regardless of description match
+    raw_url = results[0]["urls"]["small"]
+    return (raw_url + "&fm=jpg&q=80") if "?" in raw_url else (raw_url + "?fm=jpg&q=80")
+
+def fetch_unsplash_url(args) -> str:
+    vocab, access_key, ai_query, pos = args
+    if not access_key or not vocab:
+        return ""
+    bare_word = str(vocab).strip().split()[0]
+
+    # Stage 1: AI-generated concrete query (most accurate)
+    if ai_query and len(ai_query.strip()) > 2:
+        results = _unsplash_search(ai_query.strip(), access_key)
+        if results:
+            return _pick_best_result(results, vocab, ai_query)
+
+    # Stage 2: Fallback to bare vocab word — almost always finds something
+    if not ai_query or ai_query.strip().lower() != bare_word.lower():
+        results = _unsplash_search(bare_word, access_key)
+        if results:
+            return _pick_best_result(results, vocab, bare_word)
+
     return ""
 
 def download_image_file(args) -> tuple:
