@@ -1941,7 +1941,7 @@ with tab1:
                         _df.loc[_mask, 'phrase'] = _vk_series[_mask].map(phrase_map)
                         st.session_state.bulk_preview_df = _df
                         st.success(f"✅ Filled {int(_mask.sum())} phrase(s).")
-                        st.rerun(scope="fragment")
+                        st.rerun(scope="app")
             if st.button("💾 Confirm & Process Bulk", type="primary"):
                 added = len(st.session_state.bulk_preview_df)
                 st.session_state.vocab_df = pd.concat(
@@ -1951,7 +1951,7 @@ with tab1:
                 st.success(f"✅ Added {added} words!")
                 st.session_state.session_words_added += added
                 st.session_state.bulk_preview_df = None
-                st.rerun(scope="fragment")
+                st.rerun(scope="app")
 
 with tab2:
     @st.fragment
@@ -1968,7 +1968,7 @@ with tab2:
                 st.session_state.undo_df  = None
                 save_to_github(st.session_state.vocab_df)
                 st.toast("↩️ Undo applied.", icon="↩️")
-                st.rerun(scope="fragment")
+                st.rerun(scope="app")
 
         with st.expander("🔀 Sort & Filter", expanded=False):
             st.radio("Sort by", ["A→Z","Z→A","New first","Done first","No phrase"],
@@ -2018,7 +2018,7 @@ with tab2:
             st.session_state.pop("_edit_buffer",  None)
             save_to_github(st.session_state.vocab_df)
             st.toast("✅ Cloud updated!")
-            st.rerun(scope="fragment")
+            st.rerun(scope="app")
         if col_quality.button("📊 Data Quality", use_container_width=True):
             df, total = st.session_state.vocab_df, len(st.session_state.vocab_df)
             if total == 0:
@@ -2049,13 +2049,13 @@ with tab2:
                 save_to_github(st.session_state.vocab_df)
                 st.session_state.pop("_edit_buf_key", None)
                 st.toast("🔄 All words reset to New.")
-                st.rerun(scope="fragment")
+                st.rerun(scope="app")
             if col_done.button("✅ Mark ALL Done", disabled=not confirmed, use_container_width=True):
                 st.session_state.vocab_df['status'] = 'Done'
                 save_to_github(st.session_state.vocab_df)
                 st.session_state.pop("_edit_buf_key", None)
                 st.toast("✅ All words marked Done.")
-                st.rerun(scope="fragment")
+                st.rerun(scope="app")
     render_tab2()
 
 with tab3:
@@ -2081,11 +2081,11 @@ with tab3:
                     st.session_state.editing_notes     = checkpoint
                     st.session_state.editing_deck_name = st.session_state.last_deck_name
                     st.session_state.editing_audio     = True
-                    st.rerun(scope="fragment")
+                    st.rerun(scope="app")
                 if col_discard.button("🗑️ Discard checkpoint"):
                     st.session_state.generation_checkpoint = []
                     st.session_state.checkpoint_name       = ""
-                    st.rerun(scope="fragment")
+                    st.rerun(scope="app")
 
         if st.session_state.editing_notes is not None:
             st.subheader("✏️ Edit Generated Cards")
@@ -2188,10 +2188,10 @@ with tab3:
                 st.session_state.generation_checkpoint    = []
                 st.session_state.checkpoint_name          = ""
                 st.session_state.session_cards_generated += len(updated_notes)
-                st.rerun(scope="fragment")
+                # st.rerun removed — audio needs full execution before any rerun
             if col_cancel.button("❌ Discard & Start Over", use_container_width=True):
                 st.session_state.editing_notes = None
-                st.rerun(scope="fragment")
+                st.rerun(scope="app")
             return
 
         if st.session_state.apkg_buffer is not None:
@@ -2264,7 +2264,7 @@ with tab3:
                 st.session_state.processed_vocabs = []
                 st.session_state.preview_notes    = []
                 st.session_state.deck_stats       = {}
-                st.rerun(scope="fragment")
+                st.rerun(scope="app")
             return
 
         if st.session_state.vocab_df.empty:
@@ -2314,12 +2314,12 @@ with tab3:
                         st.session_state.editing_notes     = retry_notes
                         st.session_state.editing_deck_name = st.session_state.last_deck_name
                         st.session_state.editing_audio     = True
-                        st.rerun(scope="fragment")
+                        st.rerun(scope="app")
                     else:
                         st.error("❌ Retry failed. Check your API quota.")
                 if col_dismiss.button("🗑️ Dismiss"):
                     st.session_state.failed_words = []
-                    st.rerun(scope="fragment")
+                    st.rerun(scope="app")
 
         st.subheader("📇 Generate Anki Deck")
 
@@ -2475,7 +2475,7 @@ with tab3:
                 # st.rerun MUST be outside try/except — it raises an internal Streamlit
                 # exception that would otherwise be caught and swallowed by the except block
                 if _should_rerun:
-                    st.rerun(scope="fragment")
+                    st.rerun(scope="app")
 
         st.divider()
         with st.expander("📊 Session Summary", expanded=False):
