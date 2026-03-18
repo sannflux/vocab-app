@@ -18,8 +18,10 @@ import requests
 try:
     from gtts import gTTS
     import genanki
+    import gspread
+    from google.oauth2.service_account import Credentials
 except ImportError:
-    st.error("Missing libraries! Please add gTTS and genanki to requirements.txt")
+    st.error("Missing libraries! Please add gTTS, genanki, gspread, and google-auth to requirements.txt")
     st.stop()
 
 st.set_page_config(page_title="Vocab App", layout="centered", page_icon="📚")
@@ -82,6 +84,8 @@ try:
     token              = st.secrets["GITHUB_TOKEN"]
     repo_name          = st.secrets["REPO_NAME"]
     DEFAULT_GEMINI_KEY = st.secrets["GEMINI_API_KEY"]
+    SPREADSHEET_ID     = st.secrets["SPREADSHEET_ID"]
+    _GCP_INFO          = st.secrets["gcp_service_account"]
 except KeyError as e:
     st.error(f"Missing Secret: {e}. Check your .streamlit/secrets.toml")
     st.stop()
@@ -1451,42 +1455,75 @@ def create_anki_package(notes_data, deck_name, generate_audio=True, deck_id=2059
     return buffer, deck_stats
 
 
-@st.cache_data(ttl=600)
+# ════════════════════════════════════════════════════════════
+#  v3.3 — GOOGLE SHEETS (vocabulary storage, shared with Lite)
+#  GitHub still stores: word_cache, usage, settings, history
+# ════════════════════════════════════════════════════════════
+@st.cache_resource
+def get_gsheet():
+    """Cached Sheets connection — reused across all reruns."""
+    creds = Credentials.from_service_account_info(
+        dict(_GCP_INFO),
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ],
+    )
+    client = gspread.authorize(creds)
+    return client.open_by_key(SPREADSHEET_ID).worksheet("vocabulary")
+
+@st.cache_data(ttl=60)
 def load_data() -> pd.DataFrame:
+    """Load vocabulary from Google Sheets — shared with Lite app."""
     try:
-        file_content = repo.get_contents("vocabulary.csv")
-        df = pd.read_csv(io.StringIO(file_content.decoded_content.decode('utf-8')), dtype=str)
-        df['phrase'] = df['phrase'].fillna("")
-        df['status'] = df['status'].fillna('New') if 'status' in df.columns else 'New'
-        df['tags']   = df['tags'].fillna('')      if 'tags'   in df.columns else ''
-        return df.sort_values(by="vocab", ignore_index=True)
-    except GithubException as e:
-        if e.status == 404: return pd.DataFrame(columns=['vocab','phrase','status','tags'])
+        sheet = get_gsheet()
+        rows  = sheet.get_all_records(default_blank="")
+    except Exception as e:
+        st.error(f"❌ Could not load Google Sheet: {e}")
         st.stop()
-    except: st.stop()
+
+    if not rows:
+        return pd.DataFrame(columns=["vocab", "phrase", "status", "tags"])
+
+    df = pd.DataFrame(rows).astype(str)
+    for col, default in [("vocab",""), ("phrase",""), ("status","New"), ("tags","")]:
+        if col not in df.columns:
+            df[col] = default
+        df[col] = df[col].fillna(default).replace("nan", default)
+
+    df = (df[["vocab","phrase","status","tags"]]
+          .pipe(lambda d: d[d["vocab"].str.strip().str.len() > 0])
+          .sort_values("vocab", ignore_index=True))
+    return df
 
 def save_to_github(dataframe: pd.DataFrame) -> bool:
+    """Save vocabulary to Google Sheets (replaces GitHub CSV for vocab).
+    Name kept as save_to_github so all existing call sites work unchanged."""
     st.session_state.undo_df = st.session_state.vocab_df.copy()
-    t0        = time.perf_counter()
-    mask      = dataframe['vocab'].astype(str).str.strip().str.len() > 0
-    dataframe = dataframe[mask].drop_duplicates(subset=['vocab'], keep='last')
+    t0 = time.perf_counter()
+
     drop_cols = [c for c in ['Export','⚠️ Prev. Exported','_quality_score','RegisterLabel']
                  if c in dataframe.columns]
-    if drop_cols: dataframe = dataframe.drop(columns=drop_cols)
-    csv_data  = dataframe.to_csv(index=False)
-    csv_bytes = len(csv_data.encode('utf-8'))
-    if csv_bytes > 500_000:
-        st.warning(f"⚠️ vocabulary.csv is **{csv_bytes/1024:.0f} KB** — approaching GitHub limits.")
+    if drop_cols:
+        dataframe = dataframe.drop(columns=drop_cols)
+
+    clean = (dataframe[["vocab","phrase","status","tags"]]
+             .copy()
+             .pipe(lambda d: d[d["vocab"].astype(str).str.strip().str.len() > 0])
+             .drop_duplicates("vocab", keep="last")
+             .fillna(""))
+
     try:
-        file = repo.get_contents("vocabulary.csv")
-        repo.update_file(file.path, "Updated vocab", csv_data, file.sha)
-        _gh_write_tick()
-    except GithubException as e:
-        if e.status == 404:
-            repo.create_file("vocabulary.csv", "Initial commit", csv_data)
-            _gh_write_tick()
+        sheet = get_gsheet()
+        sheet.clear()
+        data = [clean.columns.tolist()] + clean.astype(str).values.tolist()
+        sheet.update(data, value_input_option="RAW")
+    except Exception as e:
+        st.error(f"❌ Google Sheets save failed: {e}")
+        return False
+
     load_data.clear()
-    st.caption(f"⏱️ GitHub save: {time.perf_counter()-t0:.2f}s ({csv_bytes/1024:.0f} KB)")
+    st.caption(f"⏱️ Sheets save: {time.perf_counter()-t0:.2f}s ({len(clean)} rows)")
     return True
 
 # ── Boot: load usage + settings ──
