@@ -32,8 +32,8 @@
   "model_id": 1607392319,
   "reversed_model_id": 1607400238,
   "gen_include_audio": true,
-  "gen_include_slow_audio": true,
-  "gen_include_sentence_audio": true,
+  "gen_include_slow_audio": false,
+  "gen_include_sentence_audio": false,
   "gen_include_reversed": false,
-  "gen_include_images": true
+  "gen_include_images": false
 }
