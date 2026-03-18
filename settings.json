@@ -27,13 +27,13 @@
   ],
   "include_antonyms": true,
   "last_deck_name": "-English Learning::Vocabulary",
-  "last_batch_size": 8,
+  "last_batch_size": 1,
   "deck_id": 2059400110,
   "model_id": 1607392319,
   "reversed_model_id": 1607400238,
   "gen_include_audio": true,
-  "gen_include_slow_audio": false,
-  "gen_include_sentence_audio": false,
+  "gen_include_slow_audio": true,
+  "gen_include_sentence_audio": true,
   "gen_include_reversed": false,
-  "gen_include_images": false
+  "gen_include_images": true
 }
