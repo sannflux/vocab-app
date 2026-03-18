@@ -2342,14 +2342,16 @@ with tab3:
         _n_words      = len(subset)
         _r_left       = max(1, requests_left)
         _recommended  = min(15, max(1, math.ceil(_n_words / max(1, int(_r_left * 0.6)))))
-        raw_batch     = st.slider("⚡ Batch Size (Words per Request)", 1, 15, _recommended)
+        _saved_batch  = st.session_state.get("last_batch_size", _recommended)
+        _slider_default = max(1, min(15, _saved_batch))
+        raw_batch     = st.slider("⚡ Batch Size (Words per Request)", 1, 15, _slider_default)
         if raw_batch == _recommended:
             st.caption(f"✅ Recommended batch size **{_recommended}** "
                        f"({math.ceil(_n_words/_recommended)} request(s) needed).")
         else:
             st.caption(f"⚙️ Custom: **{raw_batch}** (recommended was {_recommended}).")
         batch_size = raw_batch  # user's choice — quota guard below handles over-limit
-        st.session_state.last_batch_size = batch_size
+        st.session_state.last_batch_size = batch_size  # persisted — restored on next load
         # Warn only when this batch would genuinely exhaust all remaining requests
         requests_needed = math.ceil(_n_words / batch_size) if batch_size > 0 else _n_words
         if requests_needed > requests_left > 0:
